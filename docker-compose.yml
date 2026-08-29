@@ -1,0 +1,71 @@
+version: "3.9"
+
+services:
+  api:
+    build: .
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    ports:
+      - "8000:8000"
+    env_file: .env
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_started
+      qdrant:
+        condition: service_started
+    volumes:
+      - ./app:/code/app
+
+  worker:
+    build: .
+    command: celery -A app.core.celery_app worker --loglevel=info -Q ingestion,graph,incident,reasoning
+    env_file: .env
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    volumes:
+      - ./app:/code/app
+
+  beat:
+    build: .
+    command: celery -A app.core.celery_app beat --loglevel=info
+    env_file: .env
+    depends_on:
+      - redis
+    volumes:
+      - ./app:/code/app
+
+  timescaledb:
+    image: timescale/timescaledb:2.16.1-pg16
+    environment:
+      POSTGRES_USER: ghost
+      POSTGRES_PASSWORD: ghost
+      POSTGRES_DB: ghost_protocol
+    ports:
+      - "5432:5432"
+    volumes:
+      - timescale_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ghost -d ghost_protocol"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7.4-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+
+volumes:
+  timescale_data:
+  redis_data:
+# Note: no vector store here -- Ghost Protocol's core ingestion, graph,
+# incident, and simulation engines have no RAG/vector-store dependency.
+# An optional external reasoning/analysis service can be configured
+# per-workspace (see app/models/workspace.py) and would bring its own
+# infrastructure, deployed alongside this stack.

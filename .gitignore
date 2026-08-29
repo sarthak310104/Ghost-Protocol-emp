@@ -1,0 +1,26 @@
+# --- Reasoning integration (kept private) ---
+# This entire folder -- the reasoning contract and the HTTP client that
+# calls out to a configured endpoint -- is excluded from the public
+# repo. app/workers/tasks.py imports it via a soft try/except and
+# degrades gracefully when it's absent (see REASONING_AVAILABLE there),
+# so the rest of Ghost Protocol -- ingestion, behavioral graph,
+# bottleneck detection, incident correlation, evidence, simulation --
+# works fully without it. Keep this folder locally; just never `git add`
+# it in the public copy of this repo.
+app/reasoning/
+
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# --- Env / secrets ---
+.env
+*.pem
+
+# --- Editors / OS ---
+.vscode/
+.idea/
+.DS_Store
