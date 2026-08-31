@@ -31,6 +31,7 @@ async def list_incidents(
         {
             "id": str(i.id), "title": i.title, "status": i.status, "severity": i.severity,
             "primary_service": i.primary_service, "started_at": i.started_at.isoformat(),
+            "last_seen_at": i.last_seen_at.isoformat(),
             "resolved_at": i.resolved_at.isoformat() if i.resolved_at else None,
         }
         for i in incidents
@@ -58,6 +59,7 @@ async def get_incident(
         "id": str(incident.id), "title": incident.title, "status": incident.status,
         "severity": incident.severity, "primary_service": incident.primary_service,
         "started_at": incident.started_at.isoformat(),
+        "last_seen_at": incident.last_seen_at.isoformat(),
         "resolved_at": incident.resolved_at.isoformat() if incident.resolved_at else None,
         "evidence": incident.evidence,
         "timeline": [{"kind": e.kind, "message": e.message, "occurred_at": e.occurred_at.isoformat()} for e in events],
@@ -106,11 +108,13 @@ async def get_incident_evidence(
         )
     )).scalars().all()
 
-    simulation_results = [
-        r.simulation for r in (await db.execute(
-            select(ReasoningResult).where(ReasoningResult.incident_id == incident.id, ReasoningResult.simulation.isnot(None))
-        )).scalars().all()
-    ]
+    # Ghost's own simulation, computed independently of any external
+    # reasoning call (see run_incident_simulation) -- this is present
+    # even when no reasoning service is configured at all. A
+    # ReasoningResult's own simulation snapshot (if any diagnosis ran)
+    # is intentionally not queried here; incident.simulation is the
+    # single source of truth for this field.
+    simulation_results = [incident.simulation] if incident.simulation else []
 
     package = assemble_evidence_package(
         incident_id=str(incident.id),
@@ -121,7 +125,9 @@ async def get_incident_evidence(
         incident_started_at=incident.started_at,
         simulation_results=simulation_results,
     )
-    return package.to_dict()
+    result = package.to_dict()
+    result["incident"]["last_seen_at"] = incident.last_seen_at.isoformat()
+    return result
 
 
 @router.post("/v1/incidents/{incident_id}/resolve")

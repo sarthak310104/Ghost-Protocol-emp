@@ -6,7 +6,16 @@ are considered part of the same incident if they touch a shared service
 separate alerts).
 
 Also folds new anomalies into an already-open incident on the same
-service within a recency window, instead of opening a duplicate.
+service, as long as that incident has been touched within the recency
+window -- matched against `last_seen_at` (updated every time a fresh
+anomaly correlates into it), NOT `started_at`. An incident that keeps
+getting anomalies should keep absorbing them indefinitely, no matter
+how long it's been open; matching on creation time instead would mean
+any incident older than the window silently stops absorbing new
+anomalies for the same ongoing problem and starts spawning a fresh
+duplicate incident once per window -- which is worse than the original
+"one incident, retried forever" problem for anything that takes longer
+than the window to resolve, which describes most real incidents.
 """
 from datetime import datetime, timedelta, timezone
 
@@ -56,13 +65,38 @@ def _severity_for(anomalies: list[Anomaly]) -> str:
     return "low"
 
 
-def correlate_and_persist(db: Session, workspace_id, anomalies: list[Anomaly]) -> list[Incident]:
+def _merge_evidence(existing_evidence: list[dict], new_group: list[Anomaly]) -> list[dict]:
+    """
+    Merges freshly-detected anomalies into an incident's evidence,
+    deduplicating by (edge, metric) rather than appending unconditionally.
+    Without this, an anomaly that's still ongoing when the next scan runs
+    (the common case -- most incidents last more than one 30s scan cycle)
+    would re-append an identical entry every cycle, growing the evidence
+    list without bound for as long as the incident stays open.
+    """
+    merged: dict[tuple[str, str], dict] = {(e["edge"], e["metric"]): e for e in existing_evidence}
+    for a in new_group:
+        merged[(a.edge, a.metric)] = a.to_evidence_dict()  # latest reading replaces the prior one
+    return list(merged.values())
+
+
+def correlate_and_persist(db: Session, workspace_id, anomalies: list[Anomaly]) -> list[tuple[Incident, bool]]:
+    """
+    Returns (incident, should_dispatch_reasoning) pairs. should_dispatch
+    is True only for a newly-opened incident or one that just escalated
+    in severity -- NOT for every routine re-correlation of an anomaly
+    that's simply still ongoing. Without this distinction, an incident
+    that stays open for N scan cycles would trigger N external reasoning
+    calls, one per cycle, for as long as it remains open -- a real cost
+    and noise problem for any configured reasoning service, not just a
+    cosmetic one.
+    """
     if not anomalies:
         return []
 
     groups = _group_connected(anomalies)
     cutoff = datetime.now(timezone.utc) - _RECENT_INCIDENT_WINDOW
-    touched_incidents: list[Incident] = []
+    results: list[tuple[Incident, bool]] = []
 
     for group in groups:
         primary = max(group, key=lambda a: abs(a.zscore))
@@ -72,26 +106,25 @@ def correlate_and_persist(db: Session, workspace_id, anomalies: list[Anomaly]) -
             select(Incident).where(
                 Incident.workspace_id == workspace_id,
                 Incident.status.in_(["open", "diagnosing"]),
-                Incident.started_at >= cutoff,
+                Incident.last_seen_at >= cutoff,
                 Incident.primary_service.in_(services_in_group),
             )
         ).scalars().first()
 
         if existing:
-            existing.evidence = [*existing.evidence, *[a.to_evidence_dict() for a in group]]
-            # Recompute severity from just the newly-correlated anomalies; if
-            # they're worse than what's already recorded, this escalates the
-            # incident rather than only ever holding its original severity.
+            existing.evidence = _merge_evidence(existing.evidence, group)
+            existing.last_seen_at = datetime.now(timezone.utc)
             new_severity = _severity_for(group)
             severity_rank = {"low": 0, "medium": 1, "high": 2, "critical": 3}
-            if severity_rank[new_severity] > severity_rank[existing.severity]:
+            escalated = severity_rank[new_severity] > severity_rank[existing.severity]
+            if escalated:
                 existing.severity = new_severity
             db.add(Event(
                 incident_id=existing.id,
                 kind="anomaly_correlated",
                 message=f"Additional anomaly correlated: {primary.edge} ({primary.metric} z={primary.zscore:.1f})",
             ))
-            touched_incidents.append(existing)
+            results.append((existing, escalated))
         else:
             incident = Incident(
                 workspace_id=workspace_id,
@@ -107,7 +140,7 @@ def correlate_and_persist(db: Session, workspace_id, anomalies: list[Anomaly]) -
                 kind="incident_opened",
                 message=f"Incident opened from {len(group)} correlated anomaly(ies), worst z={abs(primary.zscore):.1f}",
             ))
-            touched_incidents.append(incident)
+            results.append((incident, True))
 
     db.commit()
-    return touched_incidents
+    return results

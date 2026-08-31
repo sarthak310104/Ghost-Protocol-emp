@@ -128,13 +128,61 @@ def refresh_all_reference_baselines() -> None:
         run_reference_baseline_refresh.delay(str(ws_id))
 
 
+@celery_app.task(name="app.workers.tasks.run_incident_simulation")
+def run_incident_simulation(incident_id: str) -> None:
+    """
+    Ghost's own statistical simulation for one incident -- runs
+    unconditionally as soon as the incident exists, with no dependency
+    on any external reasoning service being configured, available, or
+    successful. This is what backs GET /v1/incidents/{id}/evidence's
+    simulation_results even in a deployment with no reasoning
+    integration at all.
+    """
+    inc_id = uuid.UUID(incident_id)
+    with SyncSessionLocal() as db:
+        incident = db.get(Incident, inc_id)
+        if incident is None:
+            return
+        affected_edges = {(e["caller"], e["callee"]) for e in incident.evidence}
+        incident.simulation = simulate_incident_resolution(db, incident.workspace_id, incident.primary_service, affected_edges)
+        db.commit()
+
+
+_DIAGNOSIS_RETRY_COOLDOWN = timedelta(minutes=15)
+
+
+def _should_retry_diagnosis(db, incident: Incident) -> bool:
+    """
+    For an incident that's still open but didn't just escalate: only
+    worth retrying external reasoning if enough time has passed since
+    the last attempt. Covers legitimate cases (reasoning wasn't
+    configured yet and got fixed mid-incident, a transient outage on the
+    reasoning service) without retrying every 30s for as long as an
+    incident happens to stay open.
+    """
+    last_attempt = db.execute(
+        select(Event.occurred_at).where(
+            Event.incident_id == incident.id,
+            Event.kind.in_(["diagnosis_started"]),
+        ).order_by(Event.occurred_at.desc()).limit(1)
+    ).scalar_one_or_none()
+    if last_attempt is None:
+        return True  # never actually attempted -- shouldn't happen if correlate always dispatches on creation, but safe default
+    return datetime.now(timezone.utc) - last_attempt >= _DIAGNOSIS_RETRY_COOLDOWN
+
+
 @celery_app.task(name="app.workers.tasks.scan_for_anomalies")
 def scan_for_anomalies() -> None:
     """
     Runs on a schedule (see celery beat config) across every workspace.
     Detects anomalies against each edge's reference baseline, correlates
-    them into incidents, and kicks off diagnosis for anything newly
-    opened or escalated.
+    them into incidents, and runs Ghost's own statistical simulation
+    unconditionally (no reasoning service required) -- but only dispatches
+    external diagnosis for a NEWLY opened incident, one that just
+    escalated in severity, or one whose last diagnosis attempt is older
+    than a cooldown window. Without that gating, an incident that stays
+    open for many scan cycles would trigger one external reasoning call
+    per cycle for as long as it remains open.
     """
     with SyncSessionLocal() as db:
         workspace_ids = db.execute(select(Workspace.id)).scalars().all()
@@ -146,9 +194,11 @@ def scan_for_anomalies() -> None:
             if not anomalies:
                 continue
 
-            incidents = correlate_and_persist(db, ws_id, anomalies)
-            for incident in incidents:
-                diagnose_incident.delay(str(incident.id))
+            results = correlate_and_persist(db, ws_id, anomalies)
+            for incident, should_dispatch in results:
+                run_incident_simulation.delay(str(incident.id))
+                if should_dispatch or _should_retry_diagnosis(db, incident):
+                    diagnose_incident.delay(str(incident.id))
 
 
 @celery_app.task(name="app.workers.tasks.run_bottleneck_scan")
@@ -212,6 +262,7 @@ def diagnose_incident(incident_id: str) -> None:
         db.commit()
 
         affected_services = {e["caller"] for e in incident.evidence} | {e["callee"] for e in incident.evidence}
+        affected_edges = {(e["caller"], e["callee"]) for e in incident.evidence}
         dependencies = sorted({e["edge"] for e in incident.evidence})
 
         deployment_lookback = timedelta(minutes=60)
@@ -262,7 +313,14 @@ def diagnose_incident(incident_id: str) -> None:
             db.commit()
             return
 
-        simulation = simulate_incident_resolution(db, workspace.id, incident.primary_service, affected_services)
+        # Reuse the incident's own simulation (computed independently by
+        # run_incident_simulation) rather than recomputing it here. Falls
+        # back to computing it fresh only if that task hasn't landed yet
+        # -- Celery doesn't guarantee ordering between the two .delay()
+        # calls in scan_for_anomalies.
+        simulation = incident.simulation or simulate_incident_resolution(
+            db, workspace.id, incident.primary_service, affected_edges
+        )
 
         db.add(ReasoningResult(
             incident_id=incident.id,

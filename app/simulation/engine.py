@@ -60,12 +60,22 @@ def _project_edge_reversion(edge: ServiceEdge) -> MetricProjection | None:
 
 
 def simulate_incident_resolution(db: Session, workspace_id: uuid.UUID, primary_service: str,
-                                  affected_services: set[str]) -> dict:
+                                  affected_edges: set[tuple[str, str]]) -> dict:
+    """
+    `affected_edges` is the set of exact (caller, callee) pairs actually
+    named in the incident's evidence -- NOT the broader set of service
+    names those edges touch. Matching on service names instead of exact
+    edges was a real bug: any edge sharing just the primary_service name
+    (e.g. an unrelated healthy caller->redis edge, when redis is the
+    primary_service) got misclassified as "directly affected" by the
+    incident rather than correctly reported as blast radius, or excluded
+    entirely if it wasn't even a genuine part of the problem.
+    """
     all_edges = db.execute(
         select(ServiceEdge).where(ServiceEdge.workspace_id == workspace_id)
     ).scalars().all()
 
-    directly_affected = [e for e in all_edges if e.caller in affected_services or e.callee in affected_services]
+    directly_affected = [e for e in all_edges if (e.caller, e.callee) in affected_edges]
     blast_radius_edges = [e for e in all_edges if e not in directly_affected and (
         e.caller == primary_service or e.callee == primary_service
     )]

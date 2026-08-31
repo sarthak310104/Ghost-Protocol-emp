@@ -71,10 +71,11 @@ QUANTIFIED RESULTS
 | Dual baselines (fast "current" EWMA vs slow "reference" snapshot) | done, scheduled hourly | `app/graph/baseline.py`, `app/graph/reference.py` |
 | Bottleneck engine (fan-in/fan-out, critical-path, risk score) | done | `app/bottleneck/engine.py`, `/v1/bottlenecks` |
 | Anomaly detection (z-score vs reference baseline) | done | `app/incident/detect.py` |
-| Incident correlation (union-find across the graph) | done | `app/incident/correlate.py` |
+| Incident correlation (union-find across the graph, matched on `last_seen_at` so a still-ongoing incident never silently splits into duplicates) | done | `app/incident/correlate.py` |
 | Deployment markers + correlation | done | `app/models/deployment.py`, `POST /v1/deployments` |
 | Simulation (statistical mean-reversion + blast radius, 95% CI on improvement) | done, scoped | `app/simulation/engine.py` |
 | Evidence layer (structured schema: observations/dependencies/timeline/deployments/simulation) | done | `app/evidence/`, `GET /v1/incidents/{id}/evidence` |
+| Multi-workspace isolation, API key auth/revocation | done | `app/api/deps.py`, `app/models/workspace.py` |
 | Frontend / dashboard | not started | — |
 
 ## Evidence
@@ -108,6 +109,15 @@ incident's start time; nothing infers "this deployment caused it," it's
 just surfaced as correlated-in-time context (`POST /v1/deployments` is
 how a CI/CD pipeline records one).
 
+Evidence merges on `(edge, metric)` rather than appending on every scan
+cycle -- an anomaly that's still ongoing when the next 30s scan runs
+(the common case) updates its existing entry in place instead of
+growing the evidence list without bound for as long as the incident
+stays open. Diagnosis attempts against an external reasoning service
+follow the same discipline: only a newly-opened incident, a severity
+escalation, or a 15-minute cooldown since the last attempt triggers a
+new call, so a long-running incident doesn't retry indefinitely.
+
 ## Simulation is not reasoning
 
 The simulation engine answers "what does our data suggest would
@@ -116,10 +126,15 @@ on the improvement percentage itself (not just a point estimate) --
 never "this is definitely the fix." Current scope: statistical
 mean-reversion (projecting an anomalous metric back toward its own
 historical baseline) plus a blast-radius report of what else is
-affected. Counterfactual parameter simulation (e.g. "Redis TTL 30s ->
-300s, predicted P99 -61%") is on the roadmap (see Phase 6 below) but
-not yet implemented -- the current engine projects reversion-to-normal,
-not the effect of an arbitrary hypothetical parameter change.
+affected, matched on the exact edges involved rather than on service
+names -- an unrelated healthy edge that happens to share a service
+name with the incident (e.g. another caller of a busy shared cache)
+is correctly reported as blast radius, not misclassified as part of
+the incident itself. Counterfactual parameter simulation (e.g. "Redis
+TTL 30s -> 300s, predicted P99 -61%") is on the roadmap (see Phase 6
+below) but not yet implemented -- the current engine projects
+reversion-to-normal, not the effect of an arbitrary hypothetical
+parameter change.
 
 ## Tech stack
 
@@ -136,17 +151,36 @@ Helm (planned) · Next.js + TypeScript (frontend, not yet built)
 - **Phase 6 -- Simulation**: statistical impact estimation with confidence intervals — **done** (mean-reversion scope); counterfactual parameters — **not yet**
 - **Phase 7 -- Platform**: dashboard, workspace management, OTel onboarding docs, Helm — **not yet**
 
+## Tested
+
+The core pipeline (ingestion → behavioral graph → bottleneck detection
+→ anomaly detection → incident correlation → evidence → simulation)
+has been run end-to-end against a live Postgres + Redis + Celery
+stack, including:
+
+- OTLP trace and metric ingestion (both `gauge` and `sum` metric types)
+- Multi-edge incident correlation -- simultaneous anomalies across
+  different edges correctly merge into one incident, not several
+- Blast-radius reporting against a real multi-service topology
+- Multi-workspace data isolation and API key revocation
+- Incident resolve/recurrence handling
+- The full Alembic migration chain, from empty database to current
+  schema, in one run
+
+**Not yet verified:** TimescaleDB hypertable conversion
+(`migrations/001_hypertables.sql`) has been checked for correctness
+against the current schema but not executed against a real
+TimescaleDB instance; and the external-reasoning happy path has no
+counterpart service to test against yet.
+
 ## Running locally
 
 ```bash
 cp .env.example .env
-docker compose up
+docker compose up -d --build
+docker compose run --rm api alembic upgrade head
 ```
 
 Then point an OTel collector's `otlphttp` exporter at
 `/v1/traces` and `/v1/metrics` with the workspace API key from
 `POST /v1/admin/workspaces` (requires `X-Admin-Secret: <GHOST_SECRET_KEY>`).
-
-Note: `alembic/` is wired to the models but no migration has been
-generated yet -- run `alembic revision --autogenerate -m "init"`
-against a live Postgres first.

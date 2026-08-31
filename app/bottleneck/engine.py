@@ -94,7 +94,11 @@ def compute_bottlenecks(edges: list[ServiceEdge]) -> list[NodeRisk]:
     for e in edges:
         # a service's own "error baseline" = worst inbound edge error rate
         current = error_rate_by_service.get(e.callee, 0.0)
-        error_rate_by_service[e.callee] = max(current, e.baseline_error_rate)
+        # Use the edge's live "current" error rate for risk scoring --
+        # bottleneck risk should reflect what's happening right now, not
+        # the slow-moving "reference/normal" baseline anomaly detection
+        # compares against.
+        error_rate_by_service[e.callee] = max(current, e.current_error_rate)
         edges_by_service[e.callee].append(f"{e.caller}->{e.callee}")
 
     max_fan_in = max(fan_in.values(), default=1) or 1

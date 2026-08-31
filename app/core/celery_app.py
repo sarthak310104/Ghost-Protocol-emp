@@ -22,8 +22,10 @@ celery_app.conf.update(
         "app.workers.tasks.ingest_metrics_batch": {"queue": "ingestion"},
         "app.workers.tasks.update_graph_and_baselines": {"queue": "graph"},
         "app.workers.tasks.scan_for_anomalies": {"queue": "incident"},
+        "app.workers.tasks.run_incident_simulation": {"queue": "incident"},
         "app.workers.tasks.run_bottleneck_scan": {"queue": "graph"},
         "app.workers.tasks.refresh_all_reference_baselines": {"queue": "graph"},
+        "app.workers.tasks.run_reference_baseline_refresh": {"queue": "graph"},
         "app.workers.tasks.diagnose_incident": {"queue": "reasoning"},
     },
     beat_schedule={

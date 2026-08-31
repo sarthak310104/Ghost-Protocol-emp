@@ -35,11 +35,31 @@ class Incident(Base):
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
+    # Updated every time a new anomaly correlates into this incident
+    # (i.e. the problem is still ongoing) -- distinct from `started_at`,
+    # which never changes after creation. Correlation matching (see
+    # app/incident/correlate.py) checks THIS field against the recency
+    # window, not started_at: an incident that keeps getting fresh
+    # anomalies should keep absorbing them indefinitely, however long
+    # it's been open. Matching on started_at instead was a real bug --
+    # any incident open longer than the recency window would silently
+    # stop absorbing new anomalies for the same ongoing problem and
+    # spawn a fresh duplicate incident instead, once per window.
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
+
     # The raw anomaly evidence that triggered/grew this incident -- a list
     # of {edge, metric, observed, baseline, zscore, at} objects. This is
-    # exactly what gets serialized into the ReasoningProvider evidence
-    # payload, so the LLM's input is always inspectable here too.
+    # exactly what gets serialized into a reasoning-service request, so
+    # any external call's input is always inspectable here too.
     evidence: Mapped[list] = mapped_column(JSONB, default=list)
+
+    # Ghost's own statistical simulation, computed unconditionally as
+    # soon as the incident is correlated (app/workers/tasks.py:
+    # run_incident_simulation) -- independent of whether any external
+    # reasoning service is configured or ever gets called. This is what
+    # keeps Ghost Protocol's "works without AI" claim actually true in
+    # the data model, not just in the docs.
+    simulation: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
 
     events: Mapped[list["Event"]] = relationship(back_populates="incident", cascade="all, delete-orphan")
     reasoning_results: Mapped[list["ReasoningResult"]] = relationship(back_populates="incident", cascade="all, delete-orphan")
