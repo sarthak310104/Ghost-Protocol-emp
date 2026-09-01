@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from app.api.routes import admin, bottlenecks, deployments, incidents, ingest
+from app.api.routes import admin, bottlenecks, cohorts, deployments, incidents, ingest
 
 app = FastAPI(
     title="Ghost Protocol",
@@ -18,6 +18,7 @@ app.include_router(ingest.router, tags=["ingestion"])
 app.include_router(deployments.router, tags=["deployments"])
 app.include_router(incidents.router, tags=["incidents"])
 app.include_router(bottlenecks.router, tags=["bottlenecks"])
+app.include_router(cohorts.router, tags=["cohorts"])
 
 
 @app.get("/healthz")

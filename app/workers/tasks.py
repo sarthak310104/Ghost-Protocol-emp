@@ -5,6 +5,7 @@ from celery.utils.log import get_task_logger
 from sqlalchemy import select
 
 from app.core.celery_app import celery_app
+from app.cohort.analysis import run_cohort_analysis
 from app.db.sync_session import SyncSessionLocal
 from app.graph.baseline import EdgeObservation, update_edge_baseline
 from app.graph.reference import refresh_reference_baselines
@@ -12,6 +13,7 @@ from app.graph.repo import get_or_create_edge, get_or_create_node
 from app.graph.topology import derive_edges
 from app.incident.correlate import correlate_and_persist
 from app.incident.detect import detect_edge_anomalies
+from app.models.cohort import CohortDimension
 from app.models.deployment import Deployment
 from app.models.graph import ServiceEdge
 from app.models.incident import Event, Incident, ReasoningResult
@@ -137,6 +139,13 @@ def run_incident_simulation(incident_id: str) -> None:
     successful. This is what backs GET /v1/incidents/{id}/evidence's
     simulation_results even in a deployment with no reasoning
     integration at all.
+
+    Also attaches a cohort comparison for each affected edge, for any
+    dimension the workspace has registered -- if a canary/gradual
+    rollout happens to be running concurrently on that exact edge right
+    now, this surfaces "here's what the two live cohorts actually show"
+    alongside the mean-reversion projection, without needing anyone to
+    ask for it separately.
     """
     inc_id = uuid.UUID(incident_id)
     with SyncSessionLocal() as db:
@@ -144,7 +153,27 @@ def run_incident_simulation(incident_id: str) -> None:
         if incident is None:
             return
         affected_edges = {(e["caller"], e["callee"]) for e in incident.evidence}
-        incident.simulation = simulate_incident_resolution(db, incident.workspace_id, incident.primary_service, affected_edges)
+        simulation = simulate_incident_resolution(db, incident.workspace_id, incident.primary_service, affected_edges)
+
+        dimensions = db.execute(
+            select(CohortDimension).where(CohortDimension.workspace_id == incident.workspace_id)
+        ).scalars().all()
+
+        cohort_results = []
+        for caller, callee in affected_edges:
+            for dim in dimensions:
+                result = run_cohort_analysis(db, incident.workspace_id, caller, callee, dim.attribute_key)
+                # Only attach results that actually found something --
+                # an edge with no cohort tagging on it shouldn't clutter
+                # the output with "no data" entries for every registered
+                # dimension that happens to not apply here.
+                if result.cohorts:
+                    cohort_results.append(result.to_dict())
+
+        if cohort_results:
+            simulation["cohort_comparisons"] = cohort_results
+
+        incident.simulation = simulation
         db.commit()
 
 

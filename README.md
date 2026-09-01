@@ -1,4 +1,4 @@
-# 👻 Ghost Protocol
+# Ghost Protocol
 
 **Observe. Model. Detect. Simulate.**
 
@@ -74,6 +74,7 @@ QUANTIFIED RESULTS
 | Incident correlation (union-find across the graph, matched on `last_seen_at` so a still-ongoing incident never silently splits into duplicates) | done | `app/incident/correlate.py` |
 | Deployment markers + correlation | done | `app/models/deployment.py`, `POST /v1/deployments` |
 | Simulation (statistical mean-reversion + blast radius, 95% CI on improvement) | done, scoped | `app/simulation/engine.py` |
+| Cohort comparison (concurrent canary/rollout traffic, self-joined from raw spans, zero ingestion changes) | done | `app/cohort/`, `POST/GET /v1/cohort-dimensions`, `GET /v1/cohort-analysis` |
 | Evidence layer (structured schema: observations/dependencies/timeline/deployments/simulation) | done | `app/evidence/`, `GET /v1/incidents/{id}/evidence` |
 | Multi-workspace isolation, API key auth/revocation | done | `app/api/deps.py`, `app/models/workspace.py` |
 | Frontend / dashboard | not started | — |
@@ -123,18 +124,48 @@ new call, so a long-running incident doesn't retry indefinitely.
 The simulation engine answers "what does our data suggest would
 happen," with a 95% confidence interval on the projected value *and*
 on the improvement percentage itself (not just a point estimate) --
-never "this is definitely the fix." Current scope: statistical
-mean-reversion (projecting an anomalous metric back toward its own
-historical baseline) plus a blast-radius report of what else is
-affected, matched on the exact edges involved rather than on service
-names -- an unrelated healthy edge that happens to share a service
-name with the incident (e.g. another caller of a busy shared cache)
-is correctly reported as blast radius, not misclassified as part of
-the incident itself. Counterfactual parameter simulation (e.g. "Redis
-TTL 30s -> 300s, predicted P99 -61%") is on the roadmap (see Phase 6
-below) but not yet implemented -- the current engine projects
-reversion-to-normal, not the effect of an arbitrary hypothetical
-parameter change.
+never "this is definitely the fix." Two independent methods:
+
+- **Statistical mean-reversion** (`app/simulation/engine.py`): projects
+  an anomalous metric back toward its own historical baseline, plus a
+  blast-radius report of what else is affected, matched on the exact
+  edges involved rather than on service names -- an unrelated healthy
+  edge that happens to share a service name with the incident (e.g.
+  another caller of a busy shared cache) is correctly reported as
+  blast radius, not misclassified as part of the incident itself.
+
+- **Concurrent cohort comparison** (`app/cohort/`): if a company's
+  canary/gradual rollout tags spans with a registered attribute (e.g.
+  `config.redis_ttl_seconds`), Ghost compares latency between whatever
+  values of that attribute are currently co-occurring on the same
+  edge -- e.g. 8% of traffic at TTL=300s against the rest still at
+  30s, observed over the same recent window. This is genuinely
+  stronger evidence than before/after mean-reversion, since both
+  cohorts run concurrently and aren't confounded by whatever else
+  changed that week -- but it's still an association, not a randomized
+  experiment, and the output says exactly that (`method:
+  "two_sample_z_approximation"`, explicit 95% CI, a documented minimum
+  sample size before any comparison is computed at all). Requires zero
+  ingestion changes -- `Span.attributes` already stores every OTel
+  span attribute, so this queries data that's already there the
+  moment a company starts tagging spans. Register a dimension via
+  `POST /v1/cohort-dimensions`, query on-demand via
+  `GET /v1/cohort-analysis`, or let it surface automatically: when a
+  registered dimension has concurrent data on an incident's edge, it's
+  attached to that incident's evidence (`cohort_comparisons`)
+  alongside the mean-reversion projection, with no separate request
+  needed.
+
+This closes most of the original "counterfactual parameter simulation"
+gap (e.g. "Redis TTL 30s -> 300s, predicted P99 -61%") for companies
+already running canary/gradual rollouts. What's still not covered:
+retrospective comparison against a *past* config change with no
+concurrent cohort (Option A from the design discussion -- mining
+historical before/after when a value changed once, rather than two
+values running side by side right now), and true what-if simulation
+for a company with no rollout tooling at all, which remains out of
+scope without the sandboxed-replica infrastructure explicitly deferred
+at the start of this project.
 
 ## Tech stack
 
@@ -148,7 +179,7 @@ Helm (planned) · Next.js + TypeScript (frontend, not yet built)
 - **Phase 3 -- Bottleneck Analysis**: critical-path, fan-in/fan-out, saturation, structural risk ranking — **done**
 - **Phase 4 -- Incident Detection**: anomaly detection, signal correlation, incident timelines, deployment correlation — **done**
 - **Phase 5 -- Evidence**: evidence schema, incident evidence API, timeline generation, deployment context, historical comparisons — **done**
-- **Phase 6 -- Simulation**: statistical impact estimation with confidence intervals — **done** (mean-reversion scope); counterfactual parameters — **not yet**
+- **Phase 6 -- Simulation**: statistical impact estimation with confidence intervals — **done** (mean-reversion + concurrent cohort comparison); retrospective historical-config-change correlation and true sandboxed what-if simulation — **not yet**
 - **Phase 7 -- Platform**: dashboard, workspace management, OTel onboarding docs, Helm — **not yet**
 
 ## Tested
@@ -164,6 +195,10 @@ stack, including:
 - Blast-radius reporting against a real multi-service topology
 - Multi-workspace data isolation and API key revocation
 - Incident resolve/recurrence handling
+- Cohort comparison end-to-end: dimension registration, on-demand
+  analysis with real computed statistics, the small-sample-size and
+  no-data guardrails, and automatic attachment to an incident's
+  evidence when concurrent cohort data exists for its edge
 - The full Alembic migration chain, from empty database to current
   schema, in one run
 
