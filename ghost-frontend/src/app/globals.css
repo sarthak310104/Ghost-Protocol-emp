@@ -1,0 +1,55 @@
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@500;600;700&family=Press+Start+2P&display=swap");
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body {
+  margin: 0;
+  min-height: 100%;
+  background: #090908;
+  color: #ece8de;
+}
+
+body {
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 12px;
+  overflow-x: hidden;
+  position: relative;
+}
+
+/* Film-grain texture, identical to dashboard-base-v4.html -- carried
+   here so every page gets it globally instead of each page needing to
+   redeclare it. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.025;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence baseFrequency='.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* Ambient drift -- this was in the original approved reference design
+   (the richer "atmosphere" dashboard) but never made it into the React
+   build. Two very soft radial glows that slowly shift position over
+   14s -- barely perceptible moment to moment, but it's what keeps the
+   whole app from reading as a flat screenshot even on pages with no
+   other motion. This is the background layer; per-page hero moments
+   (like the bottleneck gauge) are a separate, bolder layer on top. */
+body::after {
+  content: "";
+  position: fixed;
+  inset: -20%;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 72% 15%, rgba(130, 110, 70, 0.055), transparent 24%),
+    radial-gradient(circle at 15% 80%, rgba(70, 90, 110, 0.045), transparent 25%);
+  animation: ambientDrift 14s ease-in-out infinite alternate;
+}
+
+@keyframes ambientDrift {
+  from { transform: translate3d(0, 0, 0) scale(1); }
+  to { transform: translate3d(1%, -1%, 0) scale(1.02); }
+}

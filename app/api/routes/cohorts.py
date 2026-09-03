@@ -5,7 +5,7 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_workspace_from_api_key
+from app.api.deps import get_workspace_from_session_or_key
 from app.db.session import get_db
 from app.models.cohort import CohortDimension
 from app.models.workspace import Workspace
@@ -21,7 +21,7 @@ class RegisterDimensionIn(BaseModel):
 @router.post("/v1/cohort-dimensions", status_code=status.HTTP_201_CREATED)
 async def register_dimension(
     payload: RegisterDimensionIn,
-    workspace: Workspace = Depends(get_workspace_from_api_key),
+    workspace: Workspace = Depends(get_workspace_from_session_or_key),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -39,7 +39,7 @@ async def register_dimension(
 
 @router.get("/v1/cohort-dimensions")
 async def list_dimensions(
-    workspace: Workspace = Depends(get_workspace_from_api_key),
+    workspace: Workspace = Depends(get_workspace_from_session_or_key),
     db: AsyncSession = Depends(get_db),
 ):
     dims = (await db.execute(
@@ -54,7 +54,7 @@ async def cohort_analysis(
     callee: str,
     dimension: str,
     window_minutes: int = 60,
-    workspace: Workspace = Depends(get_workspace_from_api_key),
+    workspace: Workspace = Depends(get_workspace_from_session_or_key),
     db: AsyncSession = Depends(get_db),
 ):
     """
