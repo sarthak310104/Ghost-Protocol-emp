@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import { api, EvidencePackage, Incident, ApiError } from "@/lib/api";
+import { IncidentDeviationHero } from "@/components/IncidentDeviationHero";
 
 const SEVERITY_BADGE: Record<Incident["severity"], string> = {
   critical: "text-status-red border-[#3a1712] bg-gradient-to-b from-[#170e0b] to-[#120a08]",
@@ -82,7 +83,13 @@ export default function IncidentDetailPage() {
           {incident?.status === "resolved" ? (
             <span className="text-status-green">● resolved{incident.resolved_at ? ` ${fmtTime(incident.resolved_at)}` : ""}</span>
           ) : (
-            <span className="text-status-green">● still active</span>
+            <span className="text-status-green flex items-center gap-1.5">
+              <span className="relative flex h-1.5 w-1.5">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-status-green opacity-75" />
+                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-status-green" />
+              </span>
+              still active
+            </span>
           )}
           {incident && incident.status !== "resolved" && (
             <button
@@ -96,6 +103,11 @@ export default function IncidentDetailPage() {
           )}
         </div>
       </div>
+
+      <IncidentDeviationHero
+        primary={evidence.observations[0] ?? null}
+        active={incident?.status !== "resolved"}
+      />
 
       <div className="grid grid-cols-2 gap-3">
         <div className="bg-surface border border-border rounded-md overflow-hidden">
@@ -138,14 +150,28 @@ export default function IncidentDetailPage() {
         <div className="h-[38px] px-4 border-b border-border flex items-center">
           <h2 className="text-[10px] uppercase tracking-[0.11em] font-medium">Timeline</h2>
         </div>
-        <div className="p-4 flex flex-col gap-2.5">
+        <div className="p-4 flex flex-col gap-0">
           {evidence.timeline.length === 0 && <div className="text-ghost-dim text-xs">No timeline events yet.</div>}
-          {evidence.timeline.map((t, i) => (
-            <div key={i} className="flex gap-4 text-[12px]">
-              <span className="text-ghost-dim w-[70px] flex-shrink-0">{fmtTime(t.occurred_at)}</span>
-              <span className="text-[#b8b1a5]">{t.message}</span>
-            </div>
-          ))}
+          {evidence.timeline.map((t, i) => {
+            const isLatest = i === evidence.timeline.length - 1;
+            return (
+              <div key={i} className="flex gap-4 text-[12px] relative pb-4 last:pb-0">
+                {i < evidence.timeline.length - 1 && (
+                  <span className="absolute left-[3px] top-3 bottom-0 w-px bg-[#2b2b2b]" />
+                )}
+                <span className="text-ghost-dim w-[70px] flex-shrink-0">{fmtTime(t.occurred_at)}</span>
+                {isLatest ? (
+                  <span className="relative flex h-1.5 w-1.5 mt-1 flex-shrink-0">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-status-red opacity-75" />
+                    <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-status-red" />
+                  </span>
+                ) : (
+                  <span className="h-1.5 w-1.5 mt-1 flex-shrink-0 rounded-full bg-[#3c3932]" />
+                )}
+                <span className="text-[#b8b1a5] -mt-[1px]">{t.message}</span>
+              </div>
+            );
+          })}
         </div>
       </div>
 
