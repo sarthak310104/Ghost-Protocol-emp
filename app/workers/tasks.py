@@ -111,8 +111,17 @@ def update_graph_and_baselines(workspace_id: str, spans: list[dict]) -> int:
 
 @celery_app.task(name="app.workers.tasks.run_reference_baseline_refresh")
 def run_reference_baseline_refresh(workspace_id: str) -> int:
+    from app.bottleneck.reference import refresh_risk_reference_baselines
+
     with SyncSessionLocal() as db:
-        return refresh_reference_baselines(db, uuid.UUID(workspace_id))
+        edge_count = refresh_reference_baselines(db, uuid.UUID(workspace_id))
+    with SyncSessionLocal() as db:
+        # Same cadence, same task, separate DB session per call for the
+        # same reason the rest of this file does it -- each helper
+        # commits its own transaction rather than sharing one across two
+        # unrelated units of work.
+        refresh_risk_reference_baselines(db, uuid.UUID(workspace_id))
+    return edge_count
 
 
 @celery_app.task(name="app.workers.tasks.refresh_all_reference_baselines")
@@ -233,7 +242,9 @@ def scan_for_anomalies() -> None:
 @celery_app.task(name="app.workers.tasks.run_bottleneck_scan")
 def run_bottleneck_scan() -> None:
     """Continuous structural-risk scan, independent of whether any incident is currently open."""
+    from app.bottleneck.baseline import update_risk_baseline
     from app.bottleneck.engine import compute_bottlenecks
+    from app.graph.repo import get_or_create_node
 
     with SyncSessionLocal() as db:
         workspace_ids = db.execute(select(Workspace.id)).scalars().all()
@@ -242,11 +253,17 @@ def run_bottleneck_scan() -> None:
         with SyncSessionLocal() as db:
             edges = db.execute(select(ServiceEdge).where(ServiceEdge.workspace_id == ws_id)).scalars().all()
             risks = compute_bottlenecks(edges)
-            # Top risks are logged for now; app/api/routes/bottlenecks.py
-            # recomputes on-demand for the dashboard rather than reading a
-            # cached table, since the graph is small enough per workspace
-            # for this to be cheap. Logged here mainly so a self-hosted
-            # deployment has a record in its own log aggregator.
+
+            # Feed each service's own risk-score baseline (current EWMA +
+            # Welford variance) on every scan -- this is what lets "is
+            # this service unusually risky right now" eventually be
+            # judged against ITS OWN history rather than one fixed
+            # threshold applied uniformly to every service.
+            for risk in risks:
+                node = get_or_create_node(db, ws_id, risk.service)
+                update_risk_baseline(node, risk.risk_score)
+            db.commit()
+
             for risk in risks[:5]:
                 logger.info("bottleneck_risk", extra={"workspace_id": str(ws_id), **risk.__dict__})
 

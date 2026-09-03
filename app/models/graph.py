@@ -35,6 +35,22 @@ class ServiceNode(Base):
     first_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now)
 
+    # --- Structural risk baseline -- same current/reference split as
+    # ServiceEdge's latency baseline, but for the bottleneck engine's
+    # risk_score instead. "current" updates every bottleneck scan (see
+    # app/bottleneck/baseline.py); "reference" is promoted from it on
+    # a slower cadence (see app/bottleneck/reference.py). This is what
+    # lets "is this service unusually risky" be judged against ITS OWN
+    # normal, rather than one fixed threshold applied to every service
+    # regardless of its typical fan-in/criticality. ---
+    current_risk_score: Mapped[float] = mapped_column(Float, default=0.0)
+    risk_score_variance: Mapped[float] = mapped_column(Float, default=0.0)  # Welford, own spread
+    risk_scan_count: Mapped[int] = mapped_column(Integer, default=0)
+
+    reference_risk_score: Mapped[float] = mapped_column(Float, default=0.0)
+    reference_risk_stddev: Mapped[float] = mapped_column(Float, default=0.0)
+    reference_risk_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
     __table_args__ = (UniqueConstraint("workspace_id", "name", name="uq_service_workspace_name"),)
 
 

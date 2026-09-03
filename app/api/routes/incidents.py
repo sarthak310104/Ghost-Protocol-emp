@@ -5,7 +5,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from app.api.deps import get_workspace_from_api_key
+from app.api.deps import get_workspace_from_session_or_key
 from app.db.session import get_db
 from app.evidence.builder import assemble_evidence_package
 from app.models.deployment import Deployment
@@ -20,7 +20,7 @@ _DEPLOYMENT_LOOKBACK = timedelta(minutes=60)
 @router.get("/v1/incidents")
 async def list_incidents(
     status_filter: str | None = None,
-    workspace: Workspace = Depends(get_workspace_from_api_key),
+    workspace: Workspace = Depends(get_workspace_from_session_or_key),
     db: AsyncSession = Depends(get_db),
 ):
     query = select(Incident).where(Incident.workspace_id == workspace.id).order_by(Incident.started_at.desc())
@@ -41,7 +41,7 @@ async def list_incidents(
 @router.get("/v1/incidents/{incident_id}")
 async def get_incident(
     incident_id: str,
-    workspace: Workspace = Depends(get_workspace_from_api_key),
+    workspace: Workspace = Depends(get_workspace_from_session_or_key),
     db: AsyncSession = Depends(get_db),
 ):
     incident = await db.get(Incident, uuid.UUID(incident_id))
@@ -78,7 +78,7 @@ async def get_incident(
 @router.get("/v1/incidents/{incident_id}/evidence")
 async def get_incident_evidence(
     incident_id: str,
-    workspace: Workspace = Depends(get_workspace_from_api_key),
+    workspace: Workspace = Depends(get_workspace_from_session_or_key),
     db: AsyncSession = Depends(get_db),
 ):
     """
@@ -133,7 +133,7 @@ async def get_incident_evidence(
 @router.post("/v1/incidents/{incident_id}/resolve")
 async def resolve_incident(
     incident_id: str,
-    workspace: Workspace = Depends(get_workspace_from_api_key),
+    workspace: Workspace = Depends(get_workspace_from_session_or_key),
     db: AsyncSession = Depends(get_db),
 ):
     incident = await db.get(Incident, uuid.UUID(incident_id))
