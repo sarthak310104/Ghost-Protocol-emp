@@ -1,0 +1,17 @@
+# Minimal dependencies to run the test suite -- deliberately NOT
+# `-r requirements.txt`. None of these tests touch a live database, so
+# there's no need to install psycopg2/asyncpg (which need PostgreSQL's
+# build tools, e.g. pg_config, present on the machine to compile from
+# source when no prebuilt wheel matches your Python version/platform)
+# or fastapi/celery (only needed to run the actual app, not to test
+# the pure logic underneath it).
+#
+# For running the real app, use requirements.txt (inside Docker, where
+# the build tools these need are already present in the image).
+
+pydantic-settings==2.5.2
+sqlalchemy==2.0.35
+cryptography==43.0.1
+redis==5.0.8
+pytest==8.3.3
+pytest-cov==5.0.0
