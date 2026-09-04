@@ -23,7 +23,18 @@ jobs:
   tick:
     runs-on: ubuntu-latest
     steps:
+      - name: Check secrets are configured
+        id: check
+        run: |
+          if [ -z "${{ secrets.GHOST_API_URL }}" ] || [ -z "${{ secrets.GHOST_INTERNAL_SECRET }}" ]; then
+            echo "GHOST_API_URL / GHOST_INTERNAL_SECRET not set yet -- skipping, not failing."
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Ping /internal/tick
+        if: steps.check.outputs.configured == 'true'
         run: |
           curl -sf -X POST "${{ secrets.GHOST_API_URL }}/internal/tick" \
             -H "X-Internal-Secret: ${{ secrets.GHOST_INTERNAL_SECRET }}"
