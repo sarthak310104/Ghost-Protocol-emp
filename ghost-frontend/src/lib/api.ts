@@ -105,6 +105,14 @@ export interface DeploymentMarker {
   minutes_before_incident: number;
 }
 
+export interface Deployment {
+  id: string;
+  service_name: string;
+  version: string;
+  deployed_at: string;
+  notes: string | null;
+}
+
 export interface MetricProjection {
   edge: string;
   metric: string;
@@ -188,6 +196,9 @@ export const api = {
     request<{ id: string; status: string }>(`/v1/incidents/${id}/resolve`, { method: "POST" }),
 
   bottlenecks: () => request<Bottleneck[]>("/v1/bottlenecks"),
+
+  deployments: (limit?: number) =>
+    request<Deployment[]>(limit ? `/v1/deployments?limit=${limit}` : "/v1/deployments"),
 
   graph: () => request<GraphEdge[]>("/v1/graph"),
 

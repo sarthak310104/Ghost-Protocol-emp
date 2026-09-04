@@ -33,7 +33,6 @@ module.exports = {
       fontFamily: {
         mono: ["IBM Plex Mono", "monospace"],
         display: ["Inter", "sans-serif"],
-        pixel: ["Press Start 2P", "monospace"],
       },
     },
   },

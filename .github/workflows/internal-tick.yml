@@ -1,0 +1,29 @@
+name: Internal tick (backup trigger)
+
+# This is a BACKUP, not the primary trigger -- GitHub Actions'
+# scheduled workflows have a documented minimum interval of 5 minutes,
+# and even that isn't guaranteed to fire exactly on time (GitHub's own
+# docs note schedule events "may be delayed during periods of high
+# loads"). The demo seeder's spike window is only 3 minutes, so relying
+# on this alone risks missing it entirely some cycles.
+#
+# The primary trigger should be an external cron service with real
+# 1-minute granularity (e.g. cron-job.org, configured separately --
+# it's a UI-based third-party service, not something that belongs as
+# code in this repo). This workflow exists so the deployment still
+# gets *some* ticks even if that external service has downtime, and
+# because it's free and worth having in a public repo regardless.
+
+on:
+  schedule:
+    - cron: "*/5 * * * *"
+  workflow_dispatch: {} # lets you trigger it manually from the Actions tab too
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping /internal/tick
+        run: |
+          curl -sf -X POST "${{ secrets.GHOST_API_URL }}/internal/tick" \
+            -H "X-Internal-Secret: ${{ secrets.GHOST_INTERNAL_SECRET }}"

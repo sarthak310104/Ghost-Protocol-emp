@@ -5,6 +5,8 @@ from celery.utils.log import get_task_logger
 from sqlalchemy import select
 
 from app.core.celery_app import celery_app
+from app.core.config import get_settings
+from app.core.dispatch import dispatch
 from app.cohort.analysis import run_cohort_analysis
 from app.db.sync_session import SyncSessionLocal
 from app.graph.baseline import EdgeObservation, update_edge_baseline
@@ -20,6 +22,7 @@ from app.models.incident import Event, Incident, ReasoningResult
 from app.models.telemetry import MetricPoint, Span
 from app.models.workspace import Workspace
 from app.simulation.engine import simulate_incident_resolution
+from app.workers.demo_seeder import demo_cycle_is_spiking
 
 # The reasoning-integration module is optional and may not be present
 # in every deployment of this codebase. This import is soft: if it's
@@ -63,7 +66,7 @@ def ingest_spans_batch(workspace_id: str, spans: list[dict]) -> int:
         db.add_all(rows)
         db.commit()
 
-    update_graph_and_baselines.delay(workspace_id, spans)
+    dispatch(update_graph_and_baselines, workspace_id, spans)
     return len(rows)
 
 
@@ -136,7 +139,7 @@ def refresh_all_reference_baselines() -> None:
     with SyncSessionLocal() as db:
         workspace_ids = db.execute(select(Workspace.id)).scalars().all()
     for ws_id in workspace_ids:
-        run_reference_baseline_refresh.delay(str(ws_id))
+        dispatch(run_reference_baseline_refresh, str(ws_id))
 
 
 @celery_app.task(name="app.workers.tasks.run_incident_simulation")
@@ -234,9 +237,9 @@ def scan_for_anomalies() -> None:
 
             results = correlate_and_persist(db, ws_id, anomalies)
             for incident, should_dispatch in results:
-                run_incident_simulation.delay(str(incident.id))
+                dispatch(run_incident_simulation, str(incident.id))
                 if should_dispatch or _should_retry_diagnosis(db, incident):
-                    diagnose_incident.delay(str(incident.id))
+                    dispatch(diagnose_incident, str(incident.id))
 
 
 @celery_app.task(name="app.workers.tasks.run_bottleneck_scan")
@@ -381,3 +384,113 @@ def diagnose_incident(incident_id: str) -> None:
         db.add(Event(incident_id=incident.id, kind="diagnosis_complete", message=f"Hypothesis generated (confidence {result.confidence:.2f})."))
         incident.status = "open"  # stays open pending human review/approval; never auto-applied
         db.commit()
+
+
+@celery_app.task(name="app.workers.tasks.seed_demo_workspace")
+def seed_demo_workspace() -> None:
+    """
+    Keeps one public-facing demo workspace looking alive -- real traffic
+    through the real ingestion pipeline (ingest_spans_batch above, the
+    exact same path a real OTel collector hits), not hand-crafted fake
+    dashboard data. Immediately a no-op on every deployment that hasn't
+    set GHOST_DEMO_WORKSPACE_ID.
+
+    Runs on a deterministic, stateless 10-minute cycle based on wall-
+    clock time (no stored "last spike" needed, so this stays correct
+    even across worker restarts or multiple worker processes): 7
+    minutes of healthy traffic, then a 3-minute latency spike on
+    checkout->redis, then back to healthy -- so a visitor at any given
+    moment has a real chance of seeing either the calm state or an
+    actual incident with real evidence, not always the same frozen
+    screenshot.
+    """
+    settings = get_settings()
+    if not settings.ghost_demo_workspace_id:
+        return
+    workspace_id = uuid.UUID(settings.ghost_demo_workspace_id)
+
+    cycle_seconds = 600
+    spike_seconds = 180
+    in_spike = demo_cycle_is_spiking(datetime.now(timezone.utc), cycle_seconds, spike_seconds)
+
+    spans = []
+    now_ns = int(datetime.now(timezone.utc).timestamp() * 1e9)
+
+    def add_trace(chain: list[str], duration_ms: float, is_error: bool = False):
+        trace_id = uuid.uuid4().hex
+        span_ids = [uuid.uuid4().hex[:16] for _ in chain]
+        for i, service in enumerate(chain):
+            parent_id = span_ids[i - 1] if i > 0 else None
+            spans.append({
+                "id": str(uuid.uuid4()), "workspace_id": str(workspace_id),
+                "trace_id": trace_id, "span_id": span_ids[i], "parent_span_id": parent_id,
+                "service_name": service, "span_name": "call", "kind": "CLIENT",
+                "started_at_unix_ns": now_ns, "duration_ms": duration_ms,
+                "status_code": "ERROR" if (is_error and i == len(chain) - 1) else "OK",
+                "attributes": {},
+            })
+
+    for _ in range(3):
+        add_trace(["gateway", "checkout", "redis"], 220.0 if in_spike else 22.0, is_error=in_spike)
+        add_trace(["gateway", "payments", "redis"], 20.0)
+        add_trace(["gateway", "inventory", "postgres"], 18.0)
+
+    with SyncSessionLocal() as db:
+        rows = [
+            Span(
+                id=uuid.UUID(s["id"]), workspace_id=uuid.UUID(s["workspace_id"]),
+                trace_id=s["trace_id"], span_id=s["span_id"], parent_span_id=s["parent_span_id"],
+                service_name=s["service_name"], span_name=s["span_name"], kind=s["kind"],
+                started_at=_ns_to_dt(s["started_at_unix_ns"]), duration_ms=s["duration_ms"],
+                status_code=s["status_code"], attributes=s["attributes"],
+            )
+            for s in spans
+        ]
+        db.add_all(rows)
+        db.commit()
+    # Deliberately not ingest_spans_batch -- that enqueues
+    # update_graph_and_baselines via .delay(), and the very next line
+    # here (refresh_reference_baselines) needs the graph actually
+    # updated first, not queued for some unpredictable later time.
+    # Racing against Celery's own queue timing, inside a task that's
+    # itself scheduled on that same queue, is exactly the kind of bug
+    # that looks fine in isolation and then silently never promotes a
+    # reference in production. Calling the graph update directly, once,
+    # keeps this run fully synchronous and avoids double-processing the
+    # same spans through both the async and sync paths.
+    update_graph_and_baselines(str(workspace_id), spans)
+
+    # Reference baselines refreshed every run (not left to the hourly
+    # schedule) so a freshly deployed demo doesn't sit for an hour with
+    # no "normal" established yet, before anomaly detection can fire at
+    # all.
+    # Only promote reference baselines during the healthy phase --
+    # doing this during the spike itself would immediately fold the
+    # elevated "current" latency into "reference," erasing the exact
+    # deviation scan_for_anomalies needs to see. Same principle as
+    # never letting a live incident's abnormal state get baked in as
+    # normal, applied to the seeder's own synthetic anomaly.
+    if not in_spike:
+        with SyncSessionLocal() as db:
+            refresh_reference_baselines(db, workspace_id)
+
+    scan_for_anomalies()
+
+    # Auto-resolve once back in the healthy phase, past a short grace
+    # period -- otherwise incidents from every previous spike cycle
+    # just pile up forever instead of demonstrating the full lifecycle
+    # (open -> evidenced -> resolved).
+    if not in_spike:
+        with SyncSessionLocal() as db:
+            open_incidents = db.execute(
+                select(Incident).where(
+                    Incident.workspace_id == workspace_id,
+                    Incident.status.in_(["open", "diagnosing"]),
+                    Incident.started_at < datetime.now(timezone.utc) - timedelta(seconds=30),
+                )
+            ).scalars().all()
+            for incident in open_incidents:
+                incident.status = "resolved"
+                incident.resolved_at = datetime.now(timezone.utc)
+                db.add(Event(incident_id=incident.id, kind="resolved", message="Auto-resolved by demo seeder."))
+            db.commit()

@@ -10,27 +10,36 @@ export default function LoginPage() {
   const [apiKey, setApiKey] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [demoLoading, setDemoLoading] = useState(false);
 
-  async function handleSubmit(e: FormEvent) {
-    e.preventDefault();
+  const demoApiKey = process.env.NEXT_PUBLIC_DEMO_API_KEY;
+
+  async function doLogin(key: string) {
     setError(null);
-    setLoading(true);
     try {
-      await api.login(apiKey);
+      await api.login(key);
       router.push("/overview");
     } catch (err) {
       if (err instanceof ApiError) {
-        // Same generic message the backend sends for every failure
-        // reason -- deliberately not distinguishing "wrong key" from
-        // "rate limited" from "workspace deleted" here in the UI copy
-        // either, beyond what the backend itself already discloses.
         setError(err.status === 429 ? "Too many attempts -- try again shortly." : err.message);
       } else {
         setError("Could not reach Ghost Protocol. Is the backend running?");
       }
-    } finally {
-      setLoading(false);
     }
+  }
+
+  async function handleSubmit(e: FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    await doLogin(apiKey);
+    setLoading(false);
+  }
+
+  async function handleDemo() {
+    if (!demoApiKey) return;
+    setDemoLoading(true);
+    await doLogin(demoApiKey);
+    setDemoLoading(false);
   }
 
   return (
@@ -84,6 +93,28 @@ export default function LoginPage() {
         <p className="text-ghost-dim text-[10px] text-center mt-6 leading-relaxed">
           Your API key is exchanged for a session and never stored in the browser.
         </p>
+
+        {demoApiKey && (
+          <>
+            <div className="flex items-center gap-3 my-5">
+              <span className="flex-1 h-px bg-border" />
+              <span className="text-ghost-dim text-[9px] uppercase tracking-[0.15em]">or</span>
+              <span className="flex-1 h-px bg-border" />
+            </div>
+            <button
+              onClick={handleDemo}
+              disabled={demoLoading || loading}
+              className="w-full border border-hud-bright/40 text-hud-bright text-xs uppercase tracking-wide
+                         rounded py-2.5 hover:border-hud-bright hover:bg-surface-hi transition-colors
+                         disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {demoLoading ? "Connecting..." : "View live demo"}
+            </button>
+            <p className="text-ghost-dim text-[10px] text-center mt-3 leading-relaxed">
+              Public demo workspace with synthetic traffic -- no signup, no key needed.
+            </p>
+          </>
+        )}
       </div>
     </main>
   );

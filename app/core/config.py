@@ -57,6 +57,34 @@ class Settings(BaseSettings):
     # --- Ingestion ---
     max_ingest_batch_size: int = 500
 
+    # --- Public demo (optional) ---
+    # If set, seed_demo_workspace (see app/workers/tasks.py) generates
+    # synthetic traffic and periodic incidents for this one workspace on
+    # a schedule, so a public-facing demo deployment always has
+    # something real to look at. Left unset ("") on every other
+    # deployment, where the task becomes a no-op immediately.
+    ghost_demo_workspace_id: str = ""
+
+    # --- Free-tier deployment mode (optional) ---
+    # When true, every place that would normally enqueue a Celery task
+    # via .delay() instead calls it directly and synchronously in the
+    # same request -- see app/core/dispatch.py. This exists because no
+    # mainstream host offers a genuinely free persistent background
+    # worker process in 2026; running everything synchronously removes
+    # the need for one entirely. Fine for a low-traffic public demo,
+    # not something you'd want for a real production deployment under
+    # real load, which is exactly why this defaults to False and stays
+    # an explicit opt-in.
+    ghost_sync_mode: bool = False
+
+    # Shared secret an external cron service must present (as
+    # X-Internal-Secret) to call POST /internal/tick, the periodic-
+    # maintenance endpoint that substitutes for Celery beat when there's
+    # no persistent worker process. Required whenever GHOST_SYNC_MODE is
+    # on; leaving it unset in sync mode means the endpoint accepts
+    # nothing (fails closed, not open).
+    ghost_internal_secret: str = ""
+
 
 @lru_cache
 def get_settings() -> Settings:

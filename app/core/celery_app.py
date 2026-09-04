@@ -27,6 +27,7 @@ celery_app.conf.update(
         "app.workers.tasks.refresh_all_reference_baselines": {"queue": "graph"},
         "app.workers.tasks.run_reference_baseline_refresh": {"queue": "graph"},
         "app.workers.tasks.diagnose_incident": {"queue": "reasoning"},
+        "app.workers.tasks.seed_demo_workspace": {"queue": "ingestion"},
     },
     beat_schedule={
         "scan-for-anomalies-every-30s": {
@@ -46,6 +47,13 @@ celery_app.conf.update(
             # anomaly detection silently never fired in a fresh deployment.
             "task": "app.workers.tasks.refresh_all_reference_baselines",
             "schedule": 3600.0,
+        },
+        "seed-demo-workspace-every-90s": {
+            # No-op unless GHOST_DEMO_WORKSPACE_ID is set -- see
+            # app/workers/tasks.py:seed_demo_workspace for what this
+            # actually does when it is.
+            "task": "app.workers.tasks.seed_demo_workspace",
+            "schedule": 90.0,
         },
     },
 )

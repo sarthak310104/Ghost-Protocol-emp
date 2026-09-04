@@ -8,6 +8,37 @@
   justify-content: center;
 }
 
+.titleFrame {
+  position: relative;
+  padding: 18px 26px;
+  overflow: hidden;
+}
+
+/* Same glowing corner-reticle language used on every featured panel
+   across the dashboard -- ties the loading screen back into the rest
+   of the app's visual identity instead of reading as a one-off. */
+.titleFrame::before,
+.titleFrame::after {
+  content: "";
+  position: absolute;
+  width: 18px;
+  height: 18px;
+  border: 1px solid #9fc0c0;
+  opacity: 0.7;
+}
+.titleFrame::before {
+  top: 0;
+  left: 0;
+  border-right: none;
+  border-bottom: none;
+}
+.titleFrame::after {
+  bottom: 0;
+  right: 0;
+  border-left: none;
+  border-top: none;
+}
+
 .title {
   display: flex;
   gap: 2px;
@@ -15,39 +46,43 @@
 }
 
 .letter {
-  font-family: "Press Start 2P", monospace;
-  font-size: 34px;
+  font-family: "IBM Plex Mono", monospace;
+  font-size: 32px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
   color: #e8e4da;
-  text-shadow: 3px 3px 0 #6b0f0f, -1px -1px 0 #1a1a1a, 2px 2px 0 rgba(0, 0, 0, 0.6);
+  text-shadow: 0 0 10px rgba(159, 192, 192, 0.55), 0 0 2px rgba(159, 192, 192, 0.9);
   display: inline-block;
   position: relative;
   z-index: 2;
   opacity: 0;
-  transform: translateY(-14px) scale(1.3);
-  filter: blur(3px);
-  animation: sprayIn 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.2) forwards;
+  animation: glitchIn 0.4s steps(1, end) forwards;
 }
 
-@keyframes sprayIn {
-  0% { opacity: 0; transform: translateY(-18px) scale(1.3); filter: blur(3px); }
-  60% { opacity: 1; }
-  100% { opacity: 1; transform: translateY(0) scale(1) rotate(var(--tilt)); filter: blur(0); }
-}
-
-.drip {
-  position: absolute;
-  width: 3px;
-  background: #6b0f0f;
-  bottom: -2px;
-  border-radius: 0 0 2px 2px;
-  opacity: 0;
-  animation: dripFall 0.5s ease-out forwards;
-}
-
-@keyframes dripFall {
-  0% { height: 0; opacity: 0; }
-  30% { opacity: 0.85; }
-  100% { opacity: 0.85; }
+/* A brief chromatic-aberration flicker (red/teal channel split, the
+   classic HUD-boot-up cue) that snaps into a clean, steady glow --
+   the sci-fi equivalent of the old spray-paint reveal, same idea
+   (letters arrive with a bit of character) but the right visual
+   language for this identity. steps(1, end) keeps each stage a hard
+   cut rather than a smooth interpolation -- a glitch should look like
+   a glitch, not ease in. */
+@keyframes glitchIn {
+  0% {
+    opacity: 0;
+    text-shadow: 2px 0 rgba(201, 74, 58, 0.7), -2px 0 rgba(159, 192, 192, 0.7);
+  }
+  35% {
+    opacity: 1;
+    text-shadow: -2px 0 rgba(201, 74, 58, 0.7), 2px 0 rgba(159, 192, 192, 0.7);
+  }
+  55% {
+    opacity: 0.4;
+    text-shadow: 1px 0 rgba(201, 74, 58, 0.5), -1px 0 rgba(159, 192, 192, 0.5);
+  }
+  100% {
+    opacity: 1;
+    text-shadow: 0 0 10px rgba(159, 192, 192, 0.55), 0 0 2px rgba(159, 192, 192, 0.9);
+  }
 }
 
 .subtitle {
@@ -92,122 +127,57 @@
   50% { opacity: 0.3; }
 }
 
-/* tiny skelly, anchored to the G */
-.anchor {
-  position: absolute;
-  top: 2px;
-  left: 4px;
-  z-index: 1;
-}
-
-.walker {
-  width: 24px;
-  height: 22px;
-  transform: translateX(0) scaleX(1);
-  transition: transform 0.6s cubic-bezier(0.45, 0, 0.55, 1);
-  opacity: 0;
-}
-
-.walkerVisible { opacity: 1; }
-.walkerOut { transform: translateX(-34px) scaleX(1); }
-.walkerReturn { transform: translateX(0) scaleX(-1); }
-
-.bob { position: relative; width: 100%; height: 100%; }
-.bobWalking { animation: bobCycle 0.3s ease-in-out infinite; }
-
-@keyframes bobCycle {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-1.5px); }
-}
-
-.skSkull {
-  width: 16px;
-  height: 13px;
-  border-radius: 50% 50% 46% 46%;
-  background: #f0ecdf;
-  border: 1.2px solid #0a0a0a;
+.scanBeam {
   position: absolute;
   top: 0;
-  left: 4px;
-}
-
-.skEye { width: 2.6px; height: 2.6px; background: #0a0a0a; border-radius: 50%; position: absolute; top: 5.5px; }
-.skEyeL { left: 3.5px; }
-.skEyeR { right: 3.5px; }
-
-.skSmile {
-  width: 6px;
-  height: 3px;
-  border-bottom: 1.3px solid #0a0a0a;
-  border-radius: 0 0 6px 6px;
-  position: absolute;
-  top: 8px;
-  left: 5px;
-}
-
-.skCheek { width: 2px; height: 1.2px; background: #d99a9a; border-radius: 50%; position: absolute; top: 8px; opacity: 0.7; }
-.skCheekL { left: 1px; }
-.skCheekR { right: 1px; }
-
-.skBody {
-  width: 15px;
-  height: 10px;
-  background: #f0ecdf;
-  border: 1.2px solid #0a0a0a;
-  border-radius: 7px;
-  position: absolute;
-  top: 11px;
-  left: 4.5px;
-}
-
-.skLeg {
-  width: 3.4px;
-  height: 5px;
-  background: #f0ecdf;
-  border: 1.1px solid #0a0a0a;
-  border-radius: 2px;
-  position: absolute;
-  top: 19px;
-  transform-origin: top center;
-}
-.skLegL { left: 6px; }
-.skLegR { left: 13.5px; }
-.bobWalking .skLegL { animation: legSwing 0.3s ease-in-out infinite; }
-.bobWalking .skLegR { animation: legSwing 0.3s ease-in-out infinite reverse; }
-
-@keyframes legSwing {
-  0%, 100% { transform: rotate(-16deg); }
-  50% { transform: rotate(16deg); }
-}
-
-.skArm {
+  bottom: 0;
+  left: -8%;
   width: 3px;
-  height: 6px;
-  background: #f0ecdf;
-  border: 1.1px solid #0a0a0a;
-  border-radius: 2px;
-  position: absolute;
-  top: 12px;
-  transform-origin: top center;
-}
-.skArmL { left: 1.5px; transform: rotate(-14deg); }
-.skArmR { right: 1.5px; transform: rotate(14deg); }
-.bobWalking .skArmL { animation: legSwing 0.3s ease-in-out infinite reverse; }
-.bobWalking .skArmR { animation: legSwing 0.3s ease-in-out infinite; }
-
-.bobWaving .skArmR { animation: waveCycle 0.4s ease-in-out infinite; }
-
-@keyframes waveCycle {
-  0%, 100% { transform: rotate(-70deg); }
-  50% { transform: rotate(-115deg); }
+  background: linear-gradient(
+    to bottom,
+    transparent,
+    rgba(159, 192, 192, 0.9) 40%,
+    rgba(159, 192, 192, 0.9) 60%,
+    transparent
+  );
+  filter: drop-shadow(0 0 6px rgba(159, 192, 192, 0.8));
+  animation: scanSweep 1.1s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+  animation-delay: 0.1s;
 }
 
-.shadow {
-  width: 15px;
-  height: 3px;
-  background: rgba(0, 0, 0, 0.4);
-  border-radius: 50%;
-  position: absolute;
-  bottom: -3px;
-  left: 5px;
+@keyframes scanSweep {
+  from { left: -8%; }
+  to { left: 108%; }
+}
+
+.bootBar {
+  width: 180px;
+  height: 4px;
+  background: #1b1a17;
+  border: 1px solid #25231e;
+  overflow: hidden;
+  /* Segmented look, same repeating-linear-gradient mask technique used
+     for the HUD bars on the Bottlenecks page -- a real system-boot
+     motif (chunky ammo/health-bar style), not a smooth generic
+     progress fill. */
+  -webkit-mask: repeating-linear-gradient(90deg, #000 0 8px, transparent 8px 10px);
+  mask: repeating-linear-gradient(90deg, #000 0 8px, transparent 8px 10px);
+}
+
+.bootBarFill {
+  height: 100%;
+  width: 0%;
+  background: #9fc0c0;
+  box-shadow: 0 0 6px rgba(159, 192, 192, 0.7);
+  /* Duration set inline from the component's own MIN_VISIBLE_MS
+     constant -- this isn't a fake progress animation running on its
+     own arbitrary timer, it's tied to the actual duration the loading
+     screen is guaranteed to stay on screen for, so the bar filling up
+     corresponds to something real. */
+  animation: bootFill linear forwards;
+}
+
+@keyframes bootFill {
+  from { width: 0%; }
+  to { width: 100%; }
 }

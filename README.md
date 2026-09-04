@@ -73,12 +73,13 @@ QUANTIFIED RESULTS
 | Multi-workspace isolation, bearer API key auth/revocation | done | `app/api/deps.py`, `app/models/workspace.py` |
 | Session-based dashboard login (Fernet-signed httpOnly cookie, real server-side revocation via Redis, separate from bearer ingestion auth) | done | `app/core/session.py`, `app/api/routes/auth.py` |
 | Security hardening (CORS allowlist, per-IP login rate limiting, security headers, input validation) | done | `app/main.py`, `app/api/routes/auth.py` |
-| Frontend dashboard (Next.js + TypeScript + Tailwind) | done, 5 pages real | `ghost-frontend/`, see below |
+| Frontend dashboard (Next.js + TypeScript + Tailwind) | done, 6 pages real | `ghost-frontend/`, see below |
+| Public demo seeding (synthetic traffic + real incident lifecycle on a schedule, through the real ingestion pipeline) | done, opt-in | `app/workers/tasks.py:seed_demo_workspace` |
 
 ## Frontend
 
 Next.js dashboard in `ghost-frontend/`, session-authenticated against
-the backend above -- no separate auth system. Five pages wired to live
+the backend above -- no separate auth system. Six pages wired to live
 data, not mocked:
 
 - **Overview** -- system status, a hero showing the single most urgent
@@ -94,16 +95,26 @@ data, not mocked:
   deviation-based coloring
 - **Behavior** -- every edge's current-vs-reference latency and error
   rate, sorted by deviation from its own baseline
+- **Deployments** -- every deploy a CI/CD pipeline has recorded, newest
+  first, backing the correlation shown on incident evidence pages
 
-Visual language: an "instrument panel" motif reused across all five
+Visual language: an "instrument panel" motif reused across all six
 pages -- a tick-ring/rotating-orbit gauge for whatever number matters
 most on that page (risk score, incident duration, deviation), glowing
 corner reticles on the one featured panel, motion reserved for
 actual deviating/critical states.
 
-Still stubbed: Deployments, Integrations (workspace reasoning-service
-config is gated behind the platform admin secret right now, not a
-per-workspace session -- needs a backend change first), Settings.
+A public demo workspace, if configured (`GHOST_DEMO_WORKSPACE_ID` on
+the backend), gets synthetic traffic and a real incident lifecycle
+generated on a 10-minute cycle by `seed_demo_workspace`
+(`app/workers/tasks.py`) -- through the same ingestion pipeline real
+traffic uses, not hand-faked dashboard data. The login page shows a
+"View live demo" button whenever `NEXT_PUBLIC_DEMO_API_KEY` is set at
+build time; otherwise it's absent entirely.
+
+Still stubbed: Integrations (workspace reasoning-service config is
+gated behind the platform admin secret right now, not a per-workspace
+session -- needs a backend change first), Settings.
 
 ## Evidence
 

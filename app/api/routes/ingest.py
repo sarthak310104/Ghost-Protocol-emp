@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_workspace_from_api_key
 from app.core.config import get_settings
+from app.core.dispatch import dispatch
 from app.db.session import get_db
 from app.ingestion.normalize import normalize_metrics, normalize_spans
 from app.ingestion.otlp_schemas import MetricsExportRequest, TracesExportRequest
@@ -27,7 +28,7 @@ async def receive_traces(
     spans = normalize_spans(payload, workspace.id)
     for i in range(0, len(spans), settings.max_ingest_batch_size):
         batch = spans[i:i + settings.max_ingest_batch_size]
-        ingest_spans_batch.delay(str(workspace.id), batch)
+        dispatch(ingest_spans_batch, str(workspace.id), batch)
     return {"accepted": len(spans)}
 
 
@@ -40,5 +41,5 @@ async def receive_metrics(
     metrics = normalize_metrics(payload, workspace.id)
     for i in range(0, len(metrics), settings.max_ingest_batch_size):
         batch = metrics[i:i + settings.max_ingest_batch_size]
-        ingest_metrics_batch.delay(str(workspace.id), batch)
+        dispatch(ingest_metrics_batch, str(workspace.id), batch)
     return {"accepted": len(metrics)}
