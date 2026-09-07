@@ -1,6 +1,7 @@
 import sys
 from logging.config import fileConfig
 from pathlib import Path
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
@@ -18,6 +19,19 @@ if config.config_file_name is not None:
 settings = get_settings()
 # Alembic runs sync; swap the async driver for the sync one, same as app/db/sync_session.py.
 sync_url = settings.database_url.replace("postgresql+asyncpg", "postgresql+psycopg2")
+
+# asyncpg and psycopg2 use different query-param names for the same
+# thing -- asyncpg wants `ssl=require`, psycopg2 wants
+# `sslmode=require`. DATABASE_URL is written for the app's runtime
+# (asyncpg) engine, so translate the SSL param specifically for this
+# sync connection rather than assuming the URL already matches
+# whatever psycopg2 expects.
+parts = urlsplit(sync_url)
+query = dict(parse_qsl(parts.query))
+if "ssl" in query:
+    query["sslmode"] = query.pop("ssl")
+sync_url = urlunsplit(parts._replace(query=urlencode(query)))
+
 config.set_main_option("sqlalchemy.url", sync_url)
 
 target_metadata = Base.metadata
