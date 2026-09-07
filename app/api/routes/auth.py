@@ -86,7 +86,16 @@ async def login(
         key=SESSION_COOKIE_NAME,
         value=token,
         httponly=True,
-        samesite="lax",
+        # SameSite=None is required for the cookie to be sent on
+        # cross-origin requests at all -- e.g. a Vercel-hosted frontend
+        # calling a Render-hosted API, genuinely different domains, not
+        # just different ports like every local-dev test this session
+        # ran. But SameSite=None is only valid alongside Secure=True
+        # (browsers reject it otherwise), so these two must always
+        # change together, never independently -- tying both to the
+        # same underlying condition keeps that guaranteed rather than
+        # relying on two separate settings staying in sync by accident.
+        samesite="none" if settings.cookies_secure else "lax",
         secure=settings.cookies_secure,  # True whenever GHOST_ENV != "local"
         max_age=60 * 60 * 12,
         path="/",
