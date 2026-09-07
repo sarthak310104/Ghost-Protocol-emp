@@ -13,6 +13,7 @@ import secrets
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Header, HTTPException, status
+from sqlalchemy import select
 
 from app.core.config import get_settings
 
@@ -33,6 +34,9 @@ def _check_secret(x_internal_secret: str | None) -> None:
 async def tick(x_internal_secret: str | None = Header(default=None)):
     _check_secret(x_internal_secret)
 
+    from app.db.sync_session import SyncSessionLocal
+    from app.ingestion.retention import prune_old_telemetry
+    from app.models.workspace import Workspace
     from app.workers.tasks import (
         refresh_all_reference_baselines,
         run_bottleneck_scan,
@@ -40,6 +44,7 @@ async def tick(x_internal_secret: str | None = Header(default=None)):
         seed_demo_workspace,
     )
 
+    settings = get_settings()
     now = datetime.now(timezone.utc)
     ran = ["scan_for_anomalies"]
     scan_for_anomalies()
@@ -49,13 +54,26 @@ async def tick(x_internal_secret: str | None = Header(default=None)):
         ran.append("run_bottleneck_scan")
         run_bottleneck_scan()
 
-    # Top of the hour, matching the original hourly cadence.
+    # Top of the hour, matching the original hourly cadence. Retention
+    # pruning rides along on the same cadence -- no need for it to run
+    # more often than the data it's cleaning up accumulates meaningfully.
     if now.minute == 0:
         ran.append("refresh_all_reference_baselines")
         refresh_all_reference_baselines()
+
+        ran.append("prune_old_telemetry")
+        with SyncSessionLocal() as db:
+            workspace_ids = db.execute(select(Workspace.id)).scalars().all()
+            pruned = {
+                str(ws_id): prune_old_telemetry(db, ws_id, settings.ghost_telemetry_retention_hours)
+                for ws_id in workspace_ids
+            }
 
     # No-ops immediately if GHOST_DEMO_WORKSPACE_ID isn't set.
     ran.append("seed_demo_workspace")
     seed_demo_workspace()
 
-    return {"ran": ran, "at": now.isoformat()}
+    result = {"ran": ran, "at": now.isoformat()}
+    if "prune_old_telemetry" in ran:
+        result["pruned"] = pruned
+    return result

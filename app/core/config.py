@@ -85,6 +85,34 @@ class Settings(BaseSettings):
     # nothing (fails closed, not open).
     ghost_internal_secret: str = ""
 
+    # --- Ingestion abuse protection ---
+    # Per-workspace, per-minute, same Redis INCR+EXPIRE pattern as the
+    # login rate limiter. The demo workspace gets its own, much
+    # stricter limit -- its API key necessarily lives client-side (the
+    # "View live demo" button), so it's the one workspace where
+    # "someone extracted the key and is hammering ingestion" is a real,
+    # expected threat, not a hypothetical one. 200/min comfortably
+    # covers the seeder's own ~18/min with headroom for real visitors
+    # poking at the demo, while still bounding the damage if the key
+    # gets scraped and abused.
+    ghost_ingest_rate_limit_per_minute: int = 6000
+    ghost_demo_ingest_rate_limit_per_minute: int = 200
+    # Hard reject (413) above this many spans/metrics in a single
+    # request body, independent of the per-minute counter above --
+    # stops one oversized payload from doing in a single call what the
+    # rate limit exists to prevent across many.
+    ghost_max_spans_per_request: int = 5000
+    ghost_max_metrics_per_request: int = 5000
+
+    # --- Telemetry retention ---
+    # Raw spans/metrics older than this get pruned by
+    # app/ingestion/retention.py, called from /internal/tick. Exists
+    # because the demo workspace writes data forever with no other
+    # cleanup, and Neon's free Postgres tier caps out at 0.5GB --
+    # without this, a long-lived free demo deployment eventually fills
+    # its own database and starts failing writes.
+    ghost_telemetry_retention_hours: int = 24
+
 
 @lru_cache
 def get_settings() -> Settings:
