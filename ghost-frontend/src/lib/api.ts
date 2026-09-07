@@ -184,6 +184,62 @@ export interface DemoPreview {
   top_bottleneck?: { service: string; risk_score: number } | null;
 }
 
+export interface CohortDimension {
+  id: string;
+  attribute_key: string;
+  label: string;
+}
+
+export interface CohortStat {
+  value: string;
+  sample_count: number;
+  mean_latency_ms: number;
+  stddev_latency_ms: number;
+}
+
+export interface CohortComparison {
+  baseline_cohort: string;
+  compared_cohort: string;
+  difference_pct: number;
+  ci_95_low_pct: number;
+  ci_95_high_pct: number;
+  method: string;
+}
+
+export interface CohortAnalysisResult {
+  edge: string;
+  dimension: string;
+  window_minutes: number;
+  cohorts: CohortStat[];
+  comparison: CohortComparison | null;
+  note: string | null;
+}
+
+export interface ServiceSummary {
+  name: string;
+  first_seen_at: string;
+  last_seen_at: string;
+  fan_in: number;
+  fan_out: number;
+  current_risk_score: number;
+  has_reference_baseline: boolean;
+  risk_zscore: number | null;
+}
+
+export interface PipelineEvent {
+  kind: string;
+  occurred_at: string;
+  is_error: boolean;
+  detail: string | null;
+}
+
+export interface PipelineHealth {
+  last_data_received_at: string | null;
+  last_scan_at: string | null;
+  is_stale: boolean;
+  recent_events: PipelineEvent[];
+}
+
 export const api = {
   login: (apiKey: string) =>
     request<Workspace>("/v1/auth/login", {
@@ -192,6 +248,19 @@ export const api = {
     }),
 
   demoPreview: () => request<DemoPreview>("/v1/public/demo-preview"),
+
+  cohortDimensions: () => request<CohortDimension[]>("/v1/cohort-dimensions"),
+
+  registerCohortDimension: (attribute_key: string, label: string) =>
+    request<CohortDimension>("/v1/cohort-dimensions", {
+      method: "POST",
+      body: JSON.stringify({ attribute_key, label }),
+    }),
+
+  cohortAnalysis: (caller: string, callee: string, dimension: string, window_minutes = 60) =>
+    request<CohortAnalysisResult>(
+      `/v1/cohort-analysis?caller=${encodeURIComponent(caller)}&callee=${encodeURIComponent(callee)}&dimension=${encodeURIComponent(dimension)}&window_minutes=${window_minutes}`
+    ),
 
   logout: () => request<{ logged_out: boolean }>("/v1/auth/logout", { method: "POST" }),
 
@@ -206,6 +275,10 @@ export const api = {
     request<{ id: string; status: string }>(`/v1/incidents/${id}/resolve`, { method: "POST" }),
 
   bottlenecks: () => request<Bottleneck[]>("/v1/bottlenecks"),
+
+  services: () => request<ServiceSummary[]>("/v1/services"),
+
+  pipelineHealth: () => request<PipelineHealth>("/v1/pipeline-health"),
 
   deployments: (limit?: number) =>
     request<Deployment[]>(limit ? `/v1/deployments?limit=${limit}` : "/v1/deployments"),

@@ -1,7 +1,7 @@
 from fastapi import FastAPI
 from starlette.middleware.cors import CORSMiddleware
 
-from app.api.routes import admin, auth, bottlenecks, cohorts, deployments, incidents, ingest, internal, public
+from app.api.routes import admin, auth, bottlenecks, cohorts, deployments, incidents, ingest, internal, pipeline_health, public, services
 from app.core.config import get_settings
 
 settings = get_settings()
@@ -51,6 +51,8 @@ app.include_router(bottlenecks.router, tags=["bottlenecks"])
 app.include_router(cohorts.router, tags=["cohorts"])
 app.include_router(internal.router, tags=["internal"])
 app.include_router(public.router, tags=["public"])
+app.include_router(services.router, tags=["services"])
+app.include_router(pipeline_health.router, tags=["pipeline_health"])
 
 
 @app.get("/healthz")

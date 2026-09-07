@@ -2,6 +2,9 @@
 
 **Observe. Model. Detect. Simulate.**
 
+**[Live demo](https://ghost-protocol-emp.vercel.app/)** -- public workspace, synthetic traffic on a
+real 10-minute healthy/incident cycle, no signup needed.
+
 Behavioral engineering platform for production systems. Ingests
 telemetry, builds a live behavioral model, finds structural
 bottlenecks and incidents, correlates failures across dependencies,
@@ -11,6 +14,28 @@ It answers:
 
 > What's happening, what changed, what's connected to it, and what
 > does the data predict happens next?
+
+## Deployment architecture
+
+```mermaid
+flowchart LR
+    User(["Visitor"])
+    Vercel["Vercel\nNext.js frontend"]
+    Render["Render\nFastAPI, GHOST_SYNC_MODE=true"]
+    Neon[("Neon\nPostgres")]
+    Upstash[("Upstash\nRedis")]
+    Cron["cron-job.org"]
+    GHA["GitHub Actions\n(backup trigger)"]
+
+    User --> Vercel --> Render
+    Render --> Neon
+    Render --> Upstash
+    Cron -->|"POST /internal/tick\nevery 1 min"| Render
+    GHA -.->|"every 5 min, backup"| Render
+```
+
+No persistent worker process -- see [Free-tier deployment](#free-tier-deployment-no-persistent-worker)
+below for why, and what replaces it.
 
 ## Measurement, not explanation
 
@@ -73,18 +98,52 @@ QUANTIFIED RESULTS
 | Multi-workspace isolation, bearer API key auth/revocation | done | `app/api/deps.py`, `app/models/workspace.py` |
 | Session-based dashboard login (Fernet-signed httpOnly cookie, real server-side revocation via Redis, separate from bearer ingestion auth) | done | `app/core/session.py`, `app/api/routes/auth.py` |
 | Security hardening (CORS allowlist, per-IP login rate limiting, security headers, input validation) | done | `app/main.py`, `app/api/routes/auth.py` |
-| Frontend dashboard (Next.js + TypeScript + Tailwind) | done, 6 pages real | `ghost-frontend/`, see below |
+| Frontend dashboard (Next.js + TypeScript + Tailwind) | done, 10 pages real | `ghost-frontend/`, see below |
 | Public demo seeding (synthetic traffic + real incident lifecycle on a schedule, through the real ingestion pipeline) | done, opt-in | `app/workers/tasks.py:seed_demo_workspace` |
+| Public landing page (live preview before login, no auth required) | done | `GET /v1/public/demo-preview`, `ghost-frontend/src/app/page.tsx` |
+| Sync-mode dispatch + `/internal/tick` (Celery beat substitute for free-tier hosting -- no persistent worker needed) | done | `app/core/dispatch.py`, `app/api/routes/internal.py` |
+| Ingestion abuse protection (per-workspace rate limits, stricter for the public demo workspace, hard payload-size caps) | done | `app/api/routes/ingest.py` |
+| Telemetry retention (prunes raw spans/metrics on a schedule, keeps derived state) | done | `app/ingestion/retention.py` |
+| Per-workspace pipeline self-observability (freshness + recent-events log, not platform-wide infra metrics) | done | `app/models/pipeline_event.py`, `GET /v1/pipeline-health` |
+| Services list (every discovered service, including ones gone quiet) | done | `GET /v1/services` |
+| CI (backend tests, migration check, frontend build) on every push | done | `.github/workflows/ci.yml` |
+
+## Free-tier deployment: no persistent worker
+
+No mainstream host offers a genuinely free persistent background
+worker in 2026 -- free tiers are for request-triggered web services,
+and a worker with no HTTP endpoint doesn't fit that model. Rather than
+pay for one, `GHOST_SYNC_MODE=true` makes every place that would
+normally enqueue a Celery task (`dispatch()`, `app/core/dispatch.py`)
+call it directly and synchronously instead. `POST /internal/tick`
+(`app/api/routes/internal.py`) substitutes for Celery beat's entire
+schedule in one endpoint, using the same deterministic wall-clock
+cadence logic as the demo seeder -- no stored state, so it's correct
+regardless of which process handles a given call or how often it's
+missed. An external cron service pings it (primary: cron-job.org,
+1-minute granularity; backup: a GitHub Actions workflow at Actions'
+own 5-minute minimum). Verified with zero Celery processes running at
+all -- see Tested.
+
+Real production deployment under real load would want the persistent
+worker back; this only makes sense for a free, low-traffic demo.
 
 ## Frontend
 
 Next.js dashboard in `ghost-frontend/`, session-authenticated against
-the backend above -- no separate auth system. Six pages wired to live
-data, not mocked:
+the backend above -- no separate auth system. A public landing page
+at `/` shows a live preview of the demo workspace before login (no
+auth needed for that one read); everything else needs a session.
+
+Ten pages wired to live data, not mocked:
 
 - **Overview** -- system status, a hero showing the single most urgent
   open incident (or all-clear), active-incident and top-bottleneck
   previews
+- **Services** -- every service Ghost has ever discovered, including
+  ones that have gone quiet -- built from the node table directly, not
+  derived from current edges, so a service doesn't silently vanish the
+  moment it stops appearing in fresh traffic
 - **Incidents** (list + detail) -- filterable list, detail page with
   full evidence: observations, dependencies, live timeline, deployment
   context, mean-reversion simulation, cohort comparisons when they exist
@@ -97,8 +156,17 @@ data, not mocked:
   rate, sorted by deviation from its own baseline
 - **Deployments** -- every deploy a CI/CD pipeline has recorded, newest
   first, backing the correlation shown on incident evidence pages
+- **Cohorts** -- auto-discovers real comparisons across every
+  registered dimension and known edge, rather than making you pick a
+  caller/callee/dimension combination manually; only surfaces what's
+  statistically valid, everything else sits in a de-emphasized
+  "gathering data" list
+- **Pipeline Health** -- this workspace's own view of whether Ghost is
+  actually watching its data right now (last data received, last
+  successful scan, a recent-events log) -- deliberately scoped to one
+  workspace, not platform-wide infrastructure metrics
 
-Visual language: an "instrument panel" motif reused across all six
+Visual language: an "instrument panel" motif reused across the data
 pages -- a tick-ring/rotating-orbit gauge for whatever number matters
 most on that page (risk score, incident duration, deviation), glowing
 corner reticles on the one featured panel, motion reserved for
@@ -108,9 +176,15 @@ A public demo workspace, if configured (`GHOST_DEMO_WORKSPACE_ID` on
 the backend), gets synthetic traffic and a real incident lifecycle
 generated on a 10-minute cycle by `seed_demo_workspace`
 (`app/workers/tasks.py`) -- through the same ingestion pipeline real
-traffic uses, not hand-faked dashboard data. The login page shows a
-"View live demo" button whenever `NEXT_PUBLIC_DEMO_API_KEY` is set at
-build time; otherwise it's absent entirely.
+traffic uses, not hand-faked dashboard data. It also generates a real
+canary-cohort split (`config.redis_ttl_seconds` 30 vs 300, the slower
+cohort genuinely slower) and a real correlated deployment right before
+each incident, so the Cohorts page and an incident's deployment
+context both have something real to show on the public demo, not just
+on a manually-seeded test workspace. The login page and landing page
+both show a "View live demo" / "Explore the live demo" button whenever
+`NEXT_PUBLIC_DEMO_API_KEY` is set at build time; otherwise it's absent
+entirely.
 
 Still stubbed: Integrations (workspace reasoning-service config is
 gated behind the platform admin secret right now, not a per-workspace
@@ -191,8 +265,12 @@ sandboxed-replica infrastructure that's out of scope for now.
 
 ## Tech stack
 
-FastAPI + AsyncIO · TimescaleDB · Redis + Celery · Docker Compose ·
-Helm (planned) · Next.js + TypeScript + Tailwind (frontend, `ghost-frontend/`)
+FastAPI + AsyncIO · Postgres (Neon in production, TimescaleDB via
+Docker Compose locally) · Redis (Upstash in production) · Celery
+(local/Docker only -- see [Free-tier deployment](#free-tier-deployment-no-persistent-worker))
+· Next.js + TypeScript + Tailwind (frontend, `ghost-frontend/`) ·
+hosted on Render (API) + Vercel (frontend) · GitHub Actions (CI +
+backup cron trigger)
 
 ## Roadmap
 
@@ -202,7 +280,7 @@ Helm (planned) · Next.js + TypeScript + Tailwind (frontend, `ghost-frontend/`)
 - **Phase 4 -- Incident Detection**: anomaly detection, signal correlation, incident timelines, deployment correlation — **done**
 - **Phase 5 -- Evidence**: evidence schema, incident evidence API, timeline generation, deployment context, historical comparisons — **done**
 - **Phase 6 -- Simulation**: statistical impact estimation with confidence intervals — **done** (mean-reversion + concurrent cohort comparison); retrospective historical-config-change correlation and true sandboxed what-if simulation — **not yet**
-- **Phase 7 -- Platform**: session-based dashboard login, security hardening, Next.js dashboard (5 real pages) — **done**; workspace self-service settings/integrations, Helm, licensing/billing service — **not yet**
+- **Phase 7 -- Platform**: session-based dashboard login, security hardening, Next.js dashboard (10 real pages), free-tier live deployment, per-workspace self-observability, CI — **done**; workspace self-service settings/integrations, licensing/billing service — **not yet**
 
 ## Tested
 
@@ -235,13 +313,53 @@ end-to-end against a live Postgres + Redis + Celery stack:
 - Frontend: every page's data contract checked against live backend
   responses, including the automatic cohort-comparison attachment,
   the incident-hero severity/tiebreak sort, the BFS graph-layout math
+- Sync-mode dispatch verified with **zero Celery processes running at
+  all** -- confirmed the default (async) path still behaves exactly as
+  before too, including a real finding worth knowing: in async mode
+  with no worker, *nothing* persists, not even raw span storage, since
+  the whole ingestion task is what's queued, not just the derived
+  graph update
+- `/internal/tick`'s auth (header or query-param secret, for cron
+  services that make custom headers awkward to configure) and its
+  cadence gating (bottleneck scan every 5 min, reference refresh +
+  retention hourly) checked against a full hour of minute values, not
+  just whichever moment it happened to fire during testing
+- Ingestion rate limiting and payload-size caps: confirmed genuinely
+  per-workspace (a blocked workspace doesn't affect another's own
+  counter), and the demo workspace's stricter limit confirmed to
+  actually apply instead of silently falling back to the general one
+- Telemetry retention: inserted spans aged 1-30 hours, pruned with a
+  24-hour window, confirmed the oldest *remaining* span landed exactly
+  on the boundary
+- Per-workspace pipeline health: forced `detect_edge_anomalies` to
+  always raise and ran a real scan across 4 real workspaces -- confirmed
+  the process didn't crash and every workspace got its own error event
+  logged with the real exception message, fixing a real gap (neither
+  scan loop had any per-workspace error isolation before this)
+- Two real cross-service deployment bugs, both reproduced and fixed,
+  not just patched blind: `asyncpg` and `psycopg2` disagree on the SSL
+  query-param name (`ssl=` vs `sslmode=`), which broke Alembic first
+  and then, independently, the sync Celery-task session -- factored
+  into one shared function afterward so it can't drift out of sync a
+  third time. Separately, session cookies needed `SameSite=None` for a
+  genuinely cross-origin deployment (Vercel + Render are different
+  domains, unlike every local test this session ran, which shared
+  `localhost`) -- `curl`-based testing structurally can't catch this
+  class of bug, since `curl` doesn't enforce browser cookie policy at
+  all
 
 **Not yet verified:** TimescaleDB hypertable conversion
 (`migrations/001_hypertables.sql`) checked for correctness against the
-current schema, not run against a real TimescaleDB instance. External
-reasoning happy path has no counterpart service to test against yet.
+current schema, not run against a real TimescaleDB instance (the
+production deployment uses plain Neon Postgres, no hypertables).
+External reasoning happy path has no counterpart service to test
+against yet.
 
 ## Running locally
+
+Local dev uses the full Celery/worker/beat setup (`GHOST_SYNC_MODE=false`,
+the default) -- the free-tier sync-mode path above is specifically for
+a deployment with no persistent worker, not needed here.
 
 ```bash
 cp .env.example .env

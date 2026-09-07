@@ -12,6 +12,7 @@ const NAV_GROUPS: { label: string; items: { href: string; icon: string; label: s
     label: "Monitor",
     items: [
       { href: "/overview", icon: "◈", label: "Overview" },
+      { href: "/services", icon: "▣", label: "Services" },
       { href: "/system-map", icon: "⌘", label: "System Map" },
       { href: "/incidents", icon: "△", label: "Incidents" },
       { href: "/behavior", icon: "∿", label: "Behavior" },
@@ -22,12 +23,14 @@ const NAV_GROUPS: { label: string; items: { href: string; icon: string; label: s
     items: [
       { href: "/bottlenecks", icon: "◇", label: "Bottlenecks" },
       { href: "/deployments", icon: "↗", label: "Deployments" },
+      { href: "/cohorts", icon: "⋔", label: "Cohorts" },
     ],
   },
   {
     label: "Workspace",
     items: [
       { href: "/integrations", icon: "⊙", label: "Integrations" },
+      { href: "/pipeline-health", icon: "♥", label: "Pipeline Health" },
       { href: "/settings", icon: "⚙", label: "Settings" },
     ],
   },

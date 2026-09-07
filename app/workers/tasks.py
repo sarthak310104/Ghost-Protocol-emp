@@ -19,6 +19,7 @@ from app.models.cohort import CohortDimension
 from app.models.deployment import Deployment
 from app.models.graph import ServiceEdge
 from app.models.incident import Event, Incident, ReasoningResult
+from app.models.pipeline_event import PipelineEvent
 from app.models.telemetry import MetricPoint, Span
 from app.models.workspace import Workspace
 from app.simulation.engine import simulate_incident_resolution
@@ -229,17 +230,31 @@ def scan_for_anomalies() -> None:
         workspace_ids = db.execute(select(Workspace.id)).scalars().all()
 
     for ws_id in workspace_ids:
-        with SyncSessionLocal() as db:
-            edges = db.execute(select(ServiceEdge).where(ServiceEdge.workspace_id == ws_id)).scalars().all()
-            anomalies = detect_edge_anomalies(edges)
-            if not anomalies:
-                continue
-
-            results = correlate_and_persist(db, ws_id, anomalies)
-            for incident, should_dispatch in results:
-                dispatch(run_incident_simulation, str(incident.id))
-                if should_dispatch or _should_retry_diagnosis(db, incident):
-                    dispatch(diagnose_incident, str(incident.id))
+        try:
+            with SyncSessionLocal() as db:
+                edges = db.execute(select(ServiceEdge).where(ServiceEdge.workspace_id == ws_id)).scalars().all()
+                anomalies = detect_edge_anomalies(edges)
+                if anomalies:
+                    results = correlate_and_persist(db, ws_id, anomalies)
+                    for incident, should_dispatch in results:
+                        dispatch(run_incident_simulation, str(incident.id))
+                        if should_dispatch or _should_retry_diagnosis(db, incident):
+                            dispatch(diagnose_incident, str(incident.id))
+                db.add(PipelineEvent(
+                    workspace_id=ws_id, kind="anomaly_scan",
+                    detail=f"{len(anomalies)} anomaly(ies) detected" if anomalies else "no anomalies",
+                ))
+                db.commit()
+        except Exception as exc:
+            # One workspace's bad data shouldn't stop every workspace
+            # after it in this loop from ever getting scanned -- log
+            # the failure against that one workspace specifically and
+            # move on, in a fresh session (the one above may be in a
+            # broken transaction state after the exception).
+            logger.exception("anomaly_scan_failed", extra={"workspace_id": str(ws_id)})
+            with SyncSessionLocal() as db:
+                db.add(PipelineEvent(workspace_id=ws_id, kind="anomaly_scan", is_error=True, detail=str(exc)[:500]))
+                db.commit()
 
 
 @celery_app.task(name="app.workers.tasks.run_bottleneck_scan")
@@ -253,22 +268,30 @@ def run_bottleneck_scan() -> None:
         workspace_ids = db.execute(select(Workspace.id)).scalars().all()
 
     for ws_id in workspace_ids:
-        with SyncSessionLocal() as db:
-            edges = db.execute(select(ServiceEdge).where(ServiceEdge.workspace_id == ws_id)).scalars().all()
-            risks = compute_bottlenecks(edges)
+        try:
+            with SyncSessionLocal() as db:
+                edges = db.execute(select(ServiceEdge).where(ServiceEdge.workspace_id == ws_id)).scalars().all()
+                risks = compute_bottlenecks(edges)
 
-            # Feed each service's own risk-score baseline (current EWMA +
-            # Welford variance) on every scan -- this is what lets "is
-            # this service unusually risky right now" eventually be
-            # judged against ITS OWN history rather than one fixed
-            # threshold applied uniformly to every service.
-            for risk in risks:
-                node = get_or_create_node(db, ws_id, risk.service)
-                update_risk_baseline(node, risk.risk_score)
-            db.commit()
+                # Feed each service's own risk-score baseline (current EWMA +
+                # Welford variance) on every scan -- this is what lets "is
+                # this service unusually risky right now" eventually be
+                # judged against ITS OWN history rather than one fixed
+                # threshold applied uniformly to every service.
+                for risk in risks:
+                    node = get_or_create_node(db, ws_id, risk.service)
+                    update_risk_baseline(node, risk.risk_score)
 
-            for risk in risks[:5]:
-                logger.info("bottleneck_risk", extra={"workspace_id": str(ws_id), **risk.__dict__})
+                db.add(PipelineEvent(workspace_id=ws_id, kind="bottleneck_scan", detail=f"{len(risks)} service(s) scored"))
+                db.commit()
+
+                for risk in risks[:5]:
+                    logger.info("bottleneck_risk", extra={"workspace_id": str(ws_id), **risk.__dict__})
+        except Exception as exc:
+            logger.exception("bottleneck_scan_failed", extra={"workspace_id": str(ws_id)})
+            with SyncSessionLocal() as db:
+                db.add(PipelineEvent(workspace_id=ws_id, kind="bottleneck_scan", is_error=True, detail=str(exc)[:500]))
+                db.commit()
 
 
 @celery_app.task(name="app.workers.tasks.diagnose_incident")
@@ -411,12 +434,15 @@ def seed_demo_workspace() -> None:
 
     cycle_seconds = 600
     spike_seconds = 180
-    in_spike = demo_cycle_is_spiking(datetime.now(timezone.utc), cycle_seconds, spike_seconds)
+    now = datetime.now(timezone.utc)
+    phase = int(now.timestamp()) % cycle_seconds
+    in_spike = demo_cycle_is_spiking(now, cycle_seconds, spike_seconds)
+    spike_start = cycle_seconds - spike_seconds  # 420
 
     spans = []
-    now_ns = int(datetime.now(timezone.utc).timestamp() * 1e9)
+    now_ns = int(now.timestamp() * 1e9)
 
-    def add_trace(chain: list[str], duration_ms: float, is_error: bool = False):
+    def add_trace(chain: list[str], duration_ms: float, is_error: bool = False, attributes: dict | None = None):
         trace_id = uuid.uuid4().hex
         span_ids = [uuid.uuid4().hex[:16] for _ in chain]
         for i, service in enumerate(chain):
@@ -427,13 +453,56 @@ def seed_demo_workspace() -> None:
                 "service_name": service, "span_name": "call", "kind": "CLIENT",
                 "started_at_unix_ns": now_ns, "duration_ms": duration_ms,
                 "status_code": "ERROR" if (is_error and i == len(chain) - 1) else "OK",
-                "attributes": {},
+                "attributes": attributes or {},
             })
 
     for _ in range(3):
         add_trace(["gateway", "checkout", "redis"], 220.0 if in_spike else 22.0, is_error=in_spike)
         add_trace(["gateway", "payments", "redis"], 20.0)
         add_trace(["gateway", "inventory", "postgres"], 18.0)
+
+    # Cohort-tagged traffic -- the same TTL 30s vs 300s canary scenario
+    # verified earlier this build, so the cohort comparison feature has
+    # something real to show on the public demo, not just on a
+    # manually-seeded test workspace. Healthy phase only: co-mingling a
+    # config-cohort split with the latency/error spike would muddy two
+    # separate stories into one confusing trace.
+    if not in_spike:
+        with SyncSessionLocal() as db:
+            exists = db.execute(
+                select(CohortDimension).where(
+                    CohortDimension.workspace_id == workspace_id,
+                    CohortDimension.attribute_key == "config.redis_ttl_seconds",
+                )
+            ).scalar_one_or_none()
+            if exists is None:
+                db.add(CohortDimension(
+                    workspace_id=workspace_id,
+                    attribute_key="config.redis_ttl_seconds",
+                    label="Redis TTL (seconds)",
+                ))
+                db.commit()
+
+        for _ in range(5):
+            add_trace(["gateway", "checkout", "redis"], 24.0, attributes={"config.redis_ttl_seconds": "30"})
+        for _ in range(3):
+            add_trace(["gateway", "checkout", "redis"], 15.0, attributes={"config.redis_ttl_seconds": "300"})
+
+    # Deployment recording, right at spike onset -- a 90s window (not a
+    # single instant) so a ~1-minute external cron reliably lands at
+    # least one tick inside it despite normal timing jitter. Gives the
+    # incident's evidence a real deployment to correlate against,
+    # instead of that section always being empty on the public demo.
+    if spike_start <= phase < spike_start + 90:
+        with SyncSessionLocal() as db:
+            db.add(Deployment(
+                workspace_id=workspace_id,
+                service_name="checkout",
+                version=f"v{int(now.timestamp())}",
+                notes="Demo-seeded deployment, correlated with the incident that follows.",
+                deployed_at=now,
+            ))
+            db.commit()
 
     with SyncSessionLocal() as db:
         rows = [
