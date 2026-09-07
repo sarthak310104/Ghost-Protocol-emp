@@ -20,19 +20,30 @@ from app.core.config import get_settings
 router = APIRouter()
 
 
-def _check_secret(x_internal_secret: str | None) -> None:
+def _check_secret(header_secret: str | None, query_secret: str | None) -> None:
     settings = get_settings()
     if not settings.ghost_internal_secret:
         # Fails closed, not open -- an unconfigured secret means this
         # endpoint accepts nothing, not that it accepts everything.
         raise HTTPException(status.HTTP_503_SERVICE_UNAVAILABLE, "Internal endpoint not configured")
-    if not x_internal_secret or not secrets.compare_digest(x_internal_secret, settings.ghost_internal_secret):
+    provided = header_secret or query_secret
+    if not provided or not secrets.compare_digest(provided, settings.ghost_internal_secret):
         raise HTTPException(status.HTTP_401_UNAUTHORIZED, "Invalid internal secret")
 
 
 @router.post("/internal/tick")
-async def tick(x_internal_secret: str | None = Header(default=None)):
-    _check_secret(x_internal_secret)
+async def tick(
+    x_internal_secret: str | None = Header(default=None),
+    secret: str | None = None,
+):
+    """
+    Accepts the secret via the X-Internal-Secret header (preferred) or
+    a `?secret=` query parameter (fallback) -- some cron/webhook
+    services make custom headers awkward or paywalled to configure, so
+    the query param exists specifically so setup never blocks on
+    finding the right UI element in a third-party dashboard.
+    """
+    _check_secret(x_internal_secret, secret)
 
     from app.db.sync_session import SyncSessionLocal
     from app.ingestion.retention import prune_old_telemetry
