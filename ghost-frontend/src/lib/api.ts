@@ -176,12 +176,22 @@ export interface EvidencePackage {
   simulation_results: SimulationResult[];
 }
 
+export interface DemoPreview {
+  configured: boolean;
+  services_observed?: number;
+  open_incident_count?: number;
+  recent_incidents?: { title: string; severity: string; primary_service: string }[];
+  top_bottleneck?: { service: string; risk_score: number } | null;
+}
+
 export const api = {
   login: (apiKey: string) =>
     request<Workspace>("/v1/auth/login", {
       method: "POST",
       body: JSON.stringify({ api_key: apiKey }),
     }),
+
+  demoPreview: () => request<DemoPreview>("/v1/public/demo-preview"),
 
   logout: () => request<{ logged_out: boolean }>("/v1/auth/logout", { method: "POST" }),
 
