@@ -5,6 +5,17 @@
 **[Live demo](https://ghost-protocol-emp.vercel.app/)** -- public workspace, synthetic traffic on a
 real 10-minute healthy/incident cycle, no signup needed.
 
+**Known limitation**: login on the live demo can fail on browsers that block
+third-party cookies by default (Safari and Firefox do this out of the box;
+some Chrome configurations too) -- the session cookie is inherently
+cross-origin here (frontend on Vercel, backend on Render, genuinely
+different domains), and no `SameSite`/`Secure` setting can override a
+browser's own decision to block third-party cookies outright. The fix is
+either a shared parent domain for both services or token-based auth
+instead of cookies -- deliberately not done here to keep hosting fully
+free. If the demo won't log in, try enabling third-party cookies for
+the site, or use a different browser.
+
 Behavioral engineering platform for production systems. Ingests
 telemetry, builds a live behavioral model, finds structural
 bottlenecks and incidents, correlates failures across dependencies,

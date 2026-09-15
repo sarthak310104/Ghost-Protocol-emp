@@ -133,9 +133,17 @@ export default function LandingPage() {
         </div>
 
         {demoApiKey && (
-          <p className="text-ghost-dim text-[10px] text-center mt-4 leading-relaxed">
-            Synthetic traffic on a public workspace -- no signup, no key needed.
-          </p>
+          <>
+            <p className="text-ghost-dim text-[10px] text-center mt-4 leading-relaxed">
+              Synthetic traffic on a public workspace -- no signup, no key needed.
+            </p>
+            <p className="text-ghost-dim text-[9px] text-center mt-2 leading-relaxed max-w-sm mx-auto">
+              Known limitation: login can fail if your browser blocks third-party cookies
+              (Safari/Firefox do by default). Frontend and backend are on different domains here
+              to keep hosting free -- if login doesn&apos;t work, try a different browser or allow
+              third-party cookies for this site.
+            </p>
+          </>
         )}
       </div>
     </main>
