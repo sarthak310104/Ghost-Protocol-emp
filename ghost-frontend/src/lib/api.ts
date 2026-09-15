@@ -240,6 +240,26 @@ export interface PipelineHealth {
   recent_events: PipelineEvent[];
 }
 
+export interface WorkspaceApiKey {
+  id: string;
+  label: string;
+  is_active: boolean;
+  created_at: string;
+  last_used_at: string | null;
+}
+
+export interface WorkspaceSettings {
+  name: string;
+  created_at: string;
+  api_keys: WorkspaceApiKey[];
+}
+
+export interface ReasoningConfig {
+  reasoning_endpoint_url: string | null;
+  reasoning_provider_label: string;
+  configured: boolean;
+}
+
 export const api = {
   login: (apiKey: string) =>
     request<Workspace>("/v1/auth/login", {
@@ -279,6 +299,27 @@ export const api = {
   services: () => request<ServiceSummary[]>("/v1/services"),
 
   pipelineHealth: () => request<PipelineHealth>("/v1/pipeline-health"),
+
+  workspaceSettings: () => request<WorkspaceSettings>("/v1/workspace"),
+
+  createApiKey: (label: string) =>
+    request<WorkspaceApiKey & { api_key: string }>("/v1/workspace/api-keys", {
+      method: "POST",
+      body: JSON.stringify({ label }),
+    }),
+
+  revokeApiKey: (id: string) =>
+    request<{ id: string; is_active: boolean }>(`/v1/workspace/api-keys/${id}/revoke`, { method: "POST" }),
+
+  reasoningConfig: () => request<ReasoningConfig>("/v1/workspace/reasoning"),
+
+  configureReasoning: (reasoning_endpoint_url: string, reasoning_api_key: string, provider_label: string) =>
+    request<ReasoningConfig>("/v1/workspace/reasoning", {
+      method: "PUT",
+      body: JSON.stringify({ reasoning_endpoint_url, reasoning_api_key, provider_label }),
+    }),
+
+  disconnectReasoning: () => request<{ configured: boolean }>("/v1/workspace/reasoning", { method: "DELETE" }),
 
   deployments: (limit?: number) =>
     request<Deployment[]>(limit ? `/v1/deployments?limit=${limit}` : "/v1/deployments"),
