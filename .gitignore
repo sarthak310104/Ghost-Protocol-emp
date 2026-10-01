@@ -28,3 +28,8 @@ venv/
 # --- Misc ---
 test_round2.sh
 cookies.txt
+
+celerybeat-schedule.db
+# Point-in-time output of scripts/benchmark.py -- hardware-dependent,
+# not meant to be tracked; BENCHMARKS.md holds the numbers worth keeping.
+benchmark_results.json

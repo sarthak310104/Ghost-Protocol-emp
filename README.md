@@ -118,6 +118,7 @@ QUANTIFIED RESULTS
 | Per-workspace pipeline self-observability (freshness + recent-events log, not platform-wide infra metrics) | done | `app/models/pipeline_event.py`, `GET /v1/pipeline-health` |
 | Services list (every discovered service, including ones gone quiet) | done | `GET /v1/services` |
 | CI (backend tests, migration check, frontend build) on every push | done | `.github/workflows/ci.yml` |
+| Load benchmark (ingestion throughput, queue-wait vs. processing latency, API read latency, cohort/retention query cost) | done | `scripts/benchmark.py`, results in [BENCHMARKS.md](./BENCHMARKS.md) |
 
 ## Free-tier deployment: no persistent worker
 

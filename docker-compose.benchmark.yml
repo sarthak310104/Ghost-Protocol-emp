@@ -1,0 +1,34 @@
+# Additive override for running scripts/benchmark.py locally. Not used
+# in normal dev or in production -- only referenced explicitly:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.benchmark.yml up -d --build
+#   docker compose exec api python scripts/benchmark.py --help
+#
+# Two things this changes vs. the base compose file:
+#
+# 1. Mounts ./scripts into the api container. The Dockerfile doesn't
+#    COPY scripts/ (it's a dev-only tool, not part of the shipped
+#    image), so the base compose file has nothing to run it from.
+#
+# 2. Raises the per-workspace ingestion rate limit and max-spans-per-
+#    request ceiling far past their production defaults
+#    (GHOST_INGEST_RATE_LIMIT_PER_MINUTE=6000,
+#    GHOST_MAX_SPANS_PER_REQUEST=5000 in .env.example). Those limits
+#    exist to protect a real multi-tenant deployment from one workspace
+#    hammering it -- here they'd just cap the benchmark's own load
+#    generator at a fraction of what a single machine can actually
+#    throw at the API, which would measure the rate limiter instead of
+#    the ingestion path.
+services:
+  api:
+    volumes:
+      - ./scripts:/code/scripts
+    environment:
+      GHOST_INGEST_RATE_LIMIT_PER_MINUTE: "100000000"
+      GHOST_MAX_SPANS_PER_REQUEST: "20000"
+
+  worker:
+    environment:
+      GHOST_INGEST_RATE_LIMIT_PER_MINUTE: "100000000"
+      GHOST_MAX_SPANS_PER_REQUEST: "20000"
+      

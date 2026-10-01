@@ -17,6 +17,14 @@ celery_app.conf.update(
     result_serializer="json",
     timezone="UTC",
     enable_utc=True,
+    # Task lifecycle events (task-sent/-received/-started/-succeeded),
+    # consumed by scripts/benchmark.py to measure queue-wait time
+    # (started - sent) and processing time (the worker-reported
+    # `runtime` on task-succeeded) separately. Negligible overhead when
+    # nothing is listening -- events are only published if a consumer
+    # connects, same mechanism `celery events`/Flower use.
+    worker_send_task_events=True,
+    task_send_sent_event=True,
     task_routes={
         "app.workers.tasks.ingest_spans_batch": {"queue": "ingestion"},
         "app.workers.tasks.ingest_metrics_batch": {"queue": "ingestion"},
