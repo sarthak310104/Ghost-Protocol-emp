@@ -98,13 +98,27 @@ def update_graph_and_baselines(workspace_id: str, spans: list[dict]) -> int:
     ws_id = uuid.UUID(workspace_id)
     edges = derive_edges(spans)
 
-    services_seen = {s["service_name"] for s in spans}
+    # Sorted, not just deduped: two concurrent batches touching an
+    # overlapping set of existing nodes/edges (very likely under real
+    # traffic -- most batches share services with whatever else is in
+    # flight) would otherwise acquire row locks in whatever order this
+    # batch's spans happened to arrive in, which differs batch to
+    # batch. Postgres deadlocks when two transactions lock the same
+    # rows in opposite order; a benchmark run surfaced exactly this
+    # (~25% of invocations deadlocked under concurrent load -- see
+    # BENCHMARKS.md). Processing nodes and edges in one fixed,
+    # deterministic order per workspace means every transaction that
+    # touches a given row reaches it via the same relative ordering,
+    # which removes the opposite-order case entirely rather than just
+    # retrying around it.
+    services_seen = sorted({s["service_name"] for s in spans})
+    edges_sorted = sorted(edges, key=lambda e: (e.caller, e.callee))
 
     with SyncSessionLocal() as db:
         for service_name in services_seen:
             get_or_create_node(db, ws_id, service_name)
 
-        for derived in edges:
+        for derived in edges_sorted:
             edge = get_or_create_edge(db, ws_id, derived.caller, derived.callee)
             update_edge_baseline(edge, EdgeObservation(duration_ms=derived.duration_ms, is_error=derived.is_error))
 

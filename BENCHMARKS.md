@@ -138,21 +138,49 @@ from this run --
 |---|---|---|
 | 175,335 | 0 | 0.17s |
 
-## Known issue found by this benchmark
+## Known issue found by this benchmark (fixed)
 
 `update_graph_and_baselines` hit real Postgres deadlocks under
-concurrent load in this run -- roughly a **quarter of its invocations
-failed** (`psycopg2.errors.DeadlockDetected` while updating
+concurrent load in the original run -- roughly a **quarter of its
+invocations failed** (`psycopg2.errors.DeadlockDetected` while updating
 `service_nodes`/`service_edges` rows two concurrent worker processes
-were touching in different orders). The task has no retry configured
-(`@celery_app.task` with no `autoretry_for`/`retry_backoff`), so a
-deadlocked batch's graph/baseline update is silently dropped -- not
-retried, not logged anywhere surfaced to the dashboard. Under bursty
-concurrent ingestion (the exact scenario this phase simulates), that
-means a real, silent gap in derived state: baselines and edge discovery
-for the lost batches never happen, with no visible error anywhere a
-company operating this would see.
+were touching in different orders). The task had no retry configured,
+so a deadlocked batch's graph/baseline update was silently dropped --
+not retried, not logged anywhere surfaced to the dashboard. Under
+bursty concurrent ingestion (the exact scenario this phase simulates),
+that meant a real, silent gap in derived state: baselines and edge
+discovery for the lost batches never happened, with no visible error
+anywhere a company operating this would see.
 
-This is a correctness bug the benchmark surfaced, not something this
-change fixes -- flagging it here rather than folding a fix into the
-same change that just measures performance.
+**Root cause and fix**: `update_graph_and_baselines` iterated
+`services_seen` (a `set`) and the derived `edges` (ordered however
+spans happened to arrive in that batch) to decide which
+nodes/edges to touch. Two concurrent batches sharing overlapping
+existing rows -- the common case under real traffic -- would reach
+those rows in different relative orders, and Postgres deadlocks when
+two transactions lock the same rows in opposite order. Fixed by
+sorting both before iterating (`sorted(services_seen)`,
+`sorted(edges, key=lambda e: (e.caller, e.callee))`), so every
+transaction touching a given workspace's rows does so in one fixed,
+deterministic order -- removing the opposite-order case entirely
+rather than papering over it with retries.
+
+Re-running this benchmark's phase 2 after the fix (40,040-span burst,
+concurrency 40, same 50-service topology) surfaced **zero** deadlocks
+across 119+ completed `update_graph_and_baselines` invocations, versus
+~25% failing before.
+
+**A second, smaller bug the same re-run surfaced**: with the deadlock
+gone, a handful of invocations (3 of ~122, ~2.5%) hit a *different*
+failure -- `psycopg2.errors.UniqueViolation` on
+`uq_service_workspace_name`/`uq_edge_workspace_pair`. This is the
+classic check-then-insert race: two concurrent batches both see "no
+row yet" for the same brand-new service/edge, and both try to insert
+it; sorting fixes lock order on *existing* rows but can't fix a race
+between two first-time creates of the same new row. Fixed in
+`app/graph/repo.py`'s `get_or_create_node`/`get_or_create_edge`: the
+insert now happens inside a savepoint (`db.begin_nested()`), and a
+unique-violation there is caught and resolved by re-selecting the row
+the other transaction actually committed, instead of aborting the
+whole batch's transaction. Confirmed clean (zero errors of any kind in
+the worker log) on a second re-run after this fix.
