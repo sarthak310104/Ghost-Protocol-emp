@@ -27,8 +27,12 @@ services:
       GHOST_INGEST_RATE_LIMIT_PER_MINUTE: "100000000"
       GHOST_MAX_SPANS_PER_REQUEST: "20000"
 
-  worker:
+  worker-ingestion:
     environment:
       GHOST_INGEST_RATE_LIMIT_PER_MINUTE: "100000000"
       GHOST_MAX_SPANS_PER_REQUEST: "20000"
-      
+
+  worker-graph:
+    environment:
+      GHOST_INGEST_RATE_LIMIT_PER_MINUTE: "100000000"
+      GHOST_MAX_SPANS_PER_REQUEST: "20000"

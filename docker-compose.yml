@@ -13,9 +13,31 @@ services:
     volumes:
       - ./app:/code/app
 
-  worker:
+  # Two worker processes, not one -- see BENCHMARKS.md's phase 2.
+  # ingest_spans_batch is cheap (tens of ms) but under concurrent load
+  # it was sharing one worker's task slots with
+  # update_graph_and_baselines, which is 10-50x more expensive per
+  # task; the cheap, latency-sensitive ingestion work queued up behind
+  # whichever graph task got there first. task_routes (below) already
+  # puts them on separate queues -- the part that was missing was
+  # actually consuming those queues with separate concurrency pools,
+  # which is just a second `celery worker` command, scoped to its own
+  # queue.
+  worker-ingestion:
     build: .
-    command: celery -A app.core.celery_app worker --loglevel=info -Q ingestion,graph,incident,reasoning
+    command: celery -A app.core.celery_app worker --loglevel=info -Q ingestion
+    env_file: .env
+    depends_on:
+      timescaledb:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    volumes:
+      - ./app:/code/app
+
+  worker-graph:
+    build: .
+    command: celery -A app.core.celery_app worker --loglevel=info -Q graph,incident,reasoning
     env_file: .env
     depends_on:
       timescaledb:

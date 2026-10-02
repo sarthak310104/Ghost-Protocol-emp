@@ -33,3 +33,7 @@ celerybeat-schedule.db
 # Point-in-time output of scripts/benchmark.py -- hardware-dependent,
 # not meant to be tracked; BENCHMARKS.md holds the numbers worth keeping.
 benchmark_results.json
+
+# Local Redis snapshot written by `redis-server` runs during manual
+# benchmark/verification sessions -- not app data, nothing to track.
+dump.rdb

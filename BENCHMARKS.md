@@ -184,3 +184,50 @@ unique-violation there is caught and resolved by re-selecting the row
 the other transaction actually committed, instead of aborting the
 whole batch's transaction. Confirmed clean (zero errors of any kind in
 the worker log) on a second re-run after this fix.
+
+## Queue separation (implemented)
+
+Phase 2's original finding above ("Reading this correctly") was that
+`ingest_spans_batch` -- fast on its own, ~60-70ms processing time --
+was getting stuck behind `update_graph_and_baselines` because both
+shared one worker process's task slots. `task_routes` already put
+them on separate Celery queues; what was missing was actually
+consuming those queues with separate worker processes, so cheap
+ingestion work couldn't get starved behind expensive graph work
+anymore. `docker-compose.yml` now runs `worker-ingestion` (queue:
+`ingestion` only) and `worker-graph` (queues: `graph,incident,
+reasoning`) instead of one `worker` consuming all four.
+
+Re-ran the same 40,040-span/concurrency-40 burst with two separate
+2vCPU worker processes (`--concurrency=2` each, same total slot count
+as the single 4-slot worker it replaces) instead of one:
+
+| Task | queue-wait p50 (before) | queue-wait p50 (after) | queue-wait p99 (before) | queue-wait p99 (after) |
+|---|---|---|---|---|
+| `ingest_spans_batch` | 13,202ms | **4,307ms** | 30,094ms | **7,951ms** |
+| `update_graph_and_baselines` | 3,838ms | 12,187ms | 4,933ms | 25,065ms |
+
+Ingestion got faster and its queue drained sooner (t+12.6s vs.
+t+30.6s) -- it's no longer waiting on whatever the graph queue happens
+to be doing. But note what also happened: `update_graph_and_baselines`
+got *slower*, not faster. That's not a regression introduced by this
+change, it's the tradeoff made visible: the old single pool let
+ingestion opportunistically borrow idle slots from graph's share (and
+vice versa) when one queue was quiet; two fixed-size pools can't
+borrow from each other, so each queue is now capped at exactly what
+its own worker was given, no more, no less. On this benchmark's
+2-vCPU box, splitting 4 slots into 2+2 has nowhere to pull extra
+capacity from.
+
+That's the correct tradeoff to make deliberately, not by accident: in
+a real deployment, ingestion and graph workers should be sized
+independently based on their actual task cost and how latency-
+sensitive each one is (ingestion gates dashboard freshness and should
+usually win more concurrency; graph processing can tolerate a longer
+queue), not left to split whatever concurrency one shared process
+happened to have. This change makes that possible -- `docker-
+compose.yml`'s two worker commands can each take their own
+`--concurrency` independently of each other -- but doesn't pick sizes
+for you; the 2+2 split above is purely what this sandbox's CPU count
+allowed for an apples-to-apples before/after comparison, not a sizing
+recommendation.
