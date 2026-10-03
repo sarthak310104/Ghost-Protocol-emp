@@ -80,16 +80,21 @@ def _merge_evidence(existing_evidence: list[dict], new_group: list[Anomaly]) -> 
     return list(merged.values())
 
 
-def correlate_and_persist(db: Session, workspace_id, anomalies: list[Anomaly]) -> list[tuple[Incident, bool]]:
+def correlate_and_persist(db: Session, workspace_id, anomalies: list[Anomaly]) -> list[tuple[Incident, bool, bool]]:
     """
-    Returns (incident, should_dispatch_reasoning) pairs. should_dispatch
-    is True only for a newly-opened incident or one that just escalated
-    in severity -- NOT for every routine re-correlation of an anomaly
-    that's simply still ongoing. Without this distinction, an incident
-    that stays open for N scan cycles would trigger N external reasoning
-    calls, one per cycle, for as long as it remains open -- a real cost
-    and noise problem for any configured reasoning service, not just a
-    cosmetic one.
+    Returns (incident, is_new, escalated) triples. `is_new` is True only
+    the one time an incident is first created; `escalated` is True when
+    an already-open incident's severity just increased. Callers that
+    want the old "should I dispatch external reasoning" behavior use
+    `is_new or escalated` -- NOT every routine re-correlation of an
+    anomaly that's simply still ongoing. Without that distinction, an
+    incident that stays open for N scan cycles would trigger N external
+    reasoning calls, one per cycle, for as long as it remains open -- a
+    real cost and noise problem for any configured reasoning service,
+    not just a cosmetic one. `is_new` on its own is what an incident
+    notification should fire on -- a notification firing again on every
+    severity bump (including a flapping escalate/de-escalate) would be
+    noisier than useful for a first cut of this feature.
     """
     if not anomalies:
         return []
@@ -124,7 +129,7 @@ def correlate_and_persist(db: Session, workspace_id, anomalies: list[Anomaly]) -
                 kind="anomaly_correlated",
                 message=f"Additional anomaly correlated: {primary.edge} ({primary.metric} z={primary.zscore:.1f})",
             ))
-            results.append((existing, escalated))
+            results.append((existing, False, escalated))
         else:
             incident = Incident(
                 workspace_id=workspace_id,
@@ -140,7 +145,7 @@ def correlate_and_persist(db: Session, workspace_id, anomalies: list[Anomaly]) -
                 kind="incident_opened",
                 message=f"Incident opened from {len(group)} correlated anomaly(ies), worst z={abs(primary.zscore):.1f}",
             ))
-            results.append((incident, True))
+            results.append((incident, True, False))
 
     db.commit()
     return results

@@ -6,12 +6,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.deps import get_workspace_from_session_or_key
+from app.core.dispatch import dispatch
 from app.db.session import get_db
 from app.deployments.drift import compute_config_drift_async
 from app.evidence.builder import assemble_evidence_package
 from app.models.deployment import Deployment
 from app.models.incident import Event, Incident, ReasoningResult
 from app.models.workspace import Workspace
+from app.workers.tasks import send_incident_notification
 
 router = APIRouter()
 
@@ -155,4 +157,5 @@ async def resolve_incident(
     incident.resolved_at = datetime.now(timezone.utc)
     db.add(Event(incident_id=incident.id, kind="resolved", message="Marked resolved by operator."))
     await db.commit()
+    dispatch(send_incident_notification, incident_id, "incident_resolved")
     return {"id": incident_id, "status": "resolved"}

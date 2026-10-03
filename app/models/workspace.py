@@ -42,6 +42,16 @@ class Workspace(Base):
     reasoning_api_key_encrypted: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     reasoning_provider_label: Mapped[str] = mapped_column(String(64), default="unconfigured")  # informational only
 
+    # Optional outbound notification destination for this workspace --
+    # a single webhook URL, POSTed a JSON payload on incident open and
+    # incident resolve (see app/notifications/webhook.py). No separate
+    # per-provider integration: the payload includes a top-level "text"
+    # summary that a Slack Incoming Webhook accepts as-is, plus
+    # structured fields for anything that wants to parse it properly,
+    # so one URL covers Slack, a generic webhook consumer, or anything
+    # else that can receive a POST.
+    notification_webhook_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+
     api_keys: Mapped[list["ApiKey"]] = relationship(back_populates="workspace", cascade="all, delete-orphan")
 
 

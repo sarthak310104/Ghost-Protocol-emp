@@ -21,6 +21,7 @@ from app.models.deployment import Deployment
 from app.models.graph import ServiceEdge
 from app.models.incident import Event, Incident, ReasoningResult
 from app.models.pipeline_event import PipelineEvent
+from app.notifications.webhook import notify_incident_event
 from app.models.telemetry import MetricPoint, Span
 from app.models.workspace import Workspace
 from app.simulation.engine import simulate_incident_resolution
@@ -251,10 +252,12 @@ def scan_for_anomalies() -> None:
                 anomalies = detect_edge_anomalies(edges)
                 if anomalies:
                     results = correlate_and_persist(db, ws_id, anomalies)
-                    for incident, should_dispatch in results:
+                    for incident, is_new, escalated in results:
                         dispatch(run_incident_simulation, str(incident.id))
-                        if should_dispatch or _should_retry_diagnosis(db, incident):
+                        if is_new or escalated or _should_retry_diagnosis(db, incident):
                             dispatch(diagnose_incident, str(incident.id))
+                        if is_new:
+                            dispatch(send_incident_notification, str(incident.id), "incident_opened")
                 db.add(PipelineEvent(
                     workspace_id=ws_id, kind="anomaly_scan",
                     detail=f"{len(anomalies)} anomaly(ies) detected" if anomalies else "no anomalies",
@@ -307,6 +310,13 @@ def run_bottleneck_scan() -> None:
             with SyncSessionLocal() as db:
                 db.add(PipelineEvent(workspace_id=ws_id, kind="bottleneck_scan", is_error=True, detail=str(exc)[:500]))
                 db.commit()
+
+
+@celery_app.task(name="app.workers.tasks.send_incident_notification")
+def send_incident_notification(incident_id: str, event: str) -> None:
+    """See app/notifications/webhook.py -- no-ops if the workspace has no webhook configured."""
+    with SyncSessionLocal() as db:
+        notify_incident_event(db, uuid.UUID(incident_id), event)
 
 
 @celery_app.task(name="app.workers.tasks.diagnose_incident")
