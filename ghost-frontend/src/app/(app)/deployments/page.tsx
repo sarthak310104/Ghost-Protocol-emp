@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, Deployment, ApiError } from "@/lib/api";
+import { api, ConfigDrift, Deployment, ApiError } from "@/lib/api";
 
 function fmtTime(iso: string): string {
   return new Date(iso).toLocaleString(undefined, {
@@ -11,14 +11,31 @@ function fmtTime(iso: string): string {
 
 export default function DeploymentsPage() {
   const [deployments, setDeployments] = useState<Deployment[] | null>(null);
+  const [drift, setDrift] = useState<Record<string, ConfigDrift[]> | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     api
       .deployments()
-      .then(setDeployments)
+      .then(async (rows) => {
+        setDeployments(rows);
+        // One drift call per distinct service, not per deployment row --
+        // the computation is already per-service, and a service with many
+        // recorded deploys shouldn't mean many redundant calls for it.
+        const serviceNames = Array.from(new Set(rows.map((d) => d.service_name)));
+        const results = await Promise.all(
+          serviceNames.map((name) =>
+            api.configDrift(name).catch(() => [] as ConfigDrift[]) // one service's failure shouldn't blank the page
+          )
+        );
+        const bySer: Record<string, ConfigDrift[]> = {};
+        serviceNames.forEach((name, i) => { bySer[name] = results[i]; });
+        setDrift(bySer);
+      })
       .catch((err) => setError(err instanceof ApiError ? err.message : "Failed to load deployments"));
   }, []);
+
+  const driftEntries = drift ? Object.entries(drift).filter(([, entries]) => entries.length > 0) : [];
 
   return (
     <>
@@ -61,6 +78,44 @@ export default function DeploymentsPage() {
           ))}
         </div>
       </div>
+
+      {driftEntries.length > 0 && (
+        <div className="bg-surface border border-border rounded-md overflow-hidden mt-4">
+          <div className="h-[38px] px-4 border-b border-border flex items-center">
+            <h2 className="text-[10px] uppercase tracking-[0.13em] font-medium">Config drift</h2>
+          </div>
+          <div className="px-4 pt-3 text-[11px] text-ghost-dim">
+            Config values currently sitting on something other than what they held
+            in an earlier deployment -- not limited to the most recent deploy, since
+            a change several deploys back can still be live and relevant. This is a
+            candidate list, not a claim that any one value (or combination) is a
+            problem on its own.
+          </div>
+          <div className="p-4 flex flex-col gap-4">
+            {driftEntries.map(([serviceName, entries]) => (
+              <div key={serviceName}>
+                <div className="text-ghost-muted text-[11px] mb-1.5">{serviceName}</div>
+                <div className="flex flex-col gap-1.5">
+                  {entries.map((d, i) => (
+                    <div key={i} className="flex gap-4 text-[12px] items-baseline pl-3 border-l border-border">
+                      <span className="text-ghost-text w-[140px] flex-shrink-0 truncate">{d.key}</span>
+                      <span className="flex items-baseline gap-2">
+                        <span className="text-ghost-dim line-through">{d.previous_value ?? "(unset)"}</span>
+                        <span className="text-ghost-dim">→</span>
+                        <span className="text-ghost-text">{d.current_value ?? "(removed)"}</span>
+                      </span>
+                      <span className="ml-auto text-ghost-dim text-[10px] whitespace-nowrap">
+                        since {d.version_at_change} · {fmtTime(d.changed_at)} ·{" "}
+                        {d.deployments_since_change} deploy{d.deployments_since_change === 1 ? "" : "s"} ago
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </>
   );
 }

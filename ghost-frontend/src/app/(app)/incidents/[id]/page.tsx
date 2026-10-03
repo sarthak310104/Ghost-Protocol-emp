@@ -192,6 +192,39 @@ export default function IncidentDetailPage() {
         </div>
       )}
 
+      {evidence.config_drift.length > 0 && (
+        <div className="bg-surface border border-border rounded-md overflow-hidden mt-3">
+          <div className="h-[38px] px-4 border-b border-border flex items-center">
+            <h2 className="text-[10px] uppercase tracking-[0.11em] font-medium">Config drift</h2>
+          </div>
+          <div className="px-4 pt-3 text-[11px] text-ghost-dim">
+            Values currently different from an earlier deployment on a service
+            this incident touches -- not limited to the most recent deploy, since
+            a change several deploys back can still be live. Listed as candidates
+            for a human or the configured reasoning service to weigh, not a claim
+            that any one of these (or a combination) caused the incident.
+          </div>
+          <div className="p-4 flex flex-col gap-2">
+            {evidence.config_drift.map((d, i) => (
+              <div key={i} className="flex gap-4 text-[12px] items-baseline">
+                <span className="text-ghost-text w-[160px] flex-shrink-0 truncate">
+                  {d.service_name}.{d.key}
+                </span>
+                <span className="flex items-baseline gap-2">
+                  <span className="text-ghost-dim line-through">{d.previous_value ?? "(unset)"}</span>
+                  <span className="text-ghost-dim">→</span>
+                  <span className="text-ghost-text">{d.current_value ?? "(removed)"}</span>
+                </span>
+                <span className="ml-auto text-ghost-dim text-[10px] whitespace-nowrap">
+                  since {d.version_at_change} · {fmtTime(d.changed_at)} ·{" "}
+                  {d.deployments_since_change} deploy{d.deployments_since_change === 1 ? "" : "s"} ago
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {sim && (
         <div className="bg-surface border border-border rounded-md overflow-hidden mt-3">
           <div className="h-[38px] px-4 border-b border-border flex items-center justify-between">

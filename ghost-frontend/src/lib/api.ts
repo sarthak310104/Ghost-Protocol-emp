@@ -113,6 +113,18 @@ export interface Deployment {
   notes: string | null;
 }
 
+export interface ConfigDrift {
+  service_name: string;
+  key: string;
+  // null current_value means the key was removed as of the latest
+  // deploy; null previous_value means it's newly introduced.
+  current_value: string | null;
+  previous_value: string | null;
+  changed_at: string;
+  version_at_change: string;
+  deployments_since_change: number;
+}
+
 export interface MetricProjection {
   edge: string;
   metric: string;
@@ -173,6 +185,7 @@ export interface EvidencePackage {
   dependencies: string[];
   timeline: TimelineEntry[];
   deployments: DeploymentMarker[];
+  config_drift: ConfigDrift[];
   simulation_results: SimulationResult[];
 }
 
@@ -323,6 +336,9 @@ export const api = {
 
   deployments: (limit?: number) =>
     request<Deployment[]>(limit ? `/v1/deployments?limit=${limit}` : "/v1/deployments"),
+
+  configDrift: (serviceName: string) =>
+    request<ConfigDrift[]>(`/v1/deployments/${encodeURIComponent(serviceName)}/config-drift`),
 
   graph: () => request<GraphEdge[]>("/v1/graph"),
 

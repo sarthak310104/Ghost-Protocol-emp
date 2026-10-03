@@ -199,9 +199,9 @@ both show a "View live demo" / "Explore the live demo" button whenever
 `NEXT_PUBLIC_DEMO_API_KEY` is set at build time; otherwise it's absent
 entirely.
 
-Still stubbed: Integrations (workspace reasoning-service config is
-gated behind the platform admin secret right now, not a per-workspace
-session -- needs a backend change first), Settings.
+Integrations (per-workspace reasoning-service config, session-gated)
+and Settings (workspace API key management) are both implemented --
+nothing dashboard-facing is still stubbed.
 
 ## Evidence
 
@@ -317,8 +317,8 @@ backup cron trigger)
 - **Phase 3 -- Bottleneck Analysis**: critical-path, fan-in/fan-out, saturation, structural risk ranking, per-service risk baseline — **done**
 - **Phase 4 -- Incident Detection**: anomaly detection, signal correlation, incident timelines, deployment correlation — **done**
 - **Phase 5 -- Evidence**: evidence schema, incident evidence API, timeline generation, deployment context, historical comparisons — **done**
-- **Phase 6 -- Simulation**: statistical impact estimation with confidence intervals — **done** (mean-reversion + concurrent cohort comparison); retrospective historical-config-change correlation and true sandboxed what-if simulation — **not yet**
-- **Phase 7 -- Platform**: session-based dashboard login, security hardening, Next.js dashboard (10 real pages), free-tier live deployment, per-workspace self-observability, CI — **done**; workspace self-service settings/integrations, licensing/billing service — **not yet**
+- **Phase 6 -- Simulation**: statistical impact estimation with confidence intervals — **done** (mean-reversion + concurrent cohort comparison); retrospective config-drift detection — **done** (`app/deployments/drift.py`, folded into incident evidence and the Deployments page); true sandboxed what-if simulation — **not yet** (deliberately out of scope, see app/simulation/engine.py)
+- **Phase 7 -- Platform**: session-based dashboard login, security hardening, Next.js dashboard (10 real pages), free-tier live deployment, per-workspace self-observability, workspace self-service settings/integrations, CI — **done**; licensing/billing service — **not yet**
 
 ## Tested
 
