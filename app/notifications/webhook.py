@@ -60,11 +60,15 @@ def build_payload(incident: Incident, event: str) -> dict:
     }
 
 
-def _is_sendable_url(url: str) -> bool:
+def is_sendable_webhook_url(url: str) -> bool:
     # Not a full SSRF defense (this is a self-hosted, single-operator
     # deployment, not a multi-tenant one taking arbitrary user input at
     # scale) -- just enough to reject an obviously malformed value
-    # before spending a network call on it.
+    # before spending a network call on it. Public (no leading
+    # underscore) because app/api/routes/workspace.py reuses this same
+    # check when a workspace sets the URL, so a bad value is rejected
+    # at configuration time rather than only discovered later as a
+    # string of failed delivery attempts in the pipeline-health log.
     return url.startswith("https://") or url.startswith("http://")
 
 
@@ -84,7 +88,7 @@ def notify_incident_event(db: Session, incident_id: uuid.UUID, event: str) -> No
         return
 
     url = workspace.notification_webhook_url
-    if not _is_sendable_url(url):
+    if not is_sendable_webhook_url(url):
         db.add(PipelineEvent(
             workspace_id=workspace.id, kind="notification_delivery", is_error=True,
             detail=f"{event} notification for incident {incident.id} skipped -- configured webhook URL is not http(s)",

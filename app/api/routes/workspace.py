@@ -8,6 +8,7 @@ from app.core.crypto import encrypt_secret
 from app.core.security import generate_api_key, hash_api_key
 from app.db.session import get_db
 from app.models.workspace import ApiKey, Workspace
+from app.notifications.webhook import is_sendable_webhook_url
 
 router = APIRouter()
 
@@ -144,5 +145,45 @@ async def disconnect_reasoning(
     workspace.reasoning_endpoint_url = None
     workspace.reasoning_api_key_encrypted = None
     workspace.reasoning_provider_label = "unconfigured"
+    await db.commit()
+    return {"configured": False}
+
+
+@router.get("/v1/workspace/notifications")
+async def get_notification_config(
+    workspace: Workspace = Depends(get_workspace_from_session_or_key),
+):
+    """See app/notifications/webhook.py -- one URL, POSTed on incident open and resolve."""
+    return {
+        "notification_webhook_url": workspace.notification_webhook_url,
+        "configured": workspace.notification_webhook_url is not None,
+    }
+
+
+class ConfigureNotificationsIn(BaseModel):
+    notification_webhook_url: str
+
+
+@router.put("/v1/workspace/notifications")
+async def configure_notifications(
+    payload: ConfigureNotificationsIn,
+    workspace: Workspace = Depends(get_workspace_from_session_or_key),
+    db: AsyncSession = Depends(get_db),
+):
+    url = payload.notification_webhook_url.strip()
+    if not is_sendable_webhook_url(url):
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, "Webhook URL must start with http:// or https://")
+
+    workspace.notification_webhook_url = url
+    await db.commit()
+    return {"notification_webhook_url": workspace.notification_webhook_url, "configured": True}
+
+
+@router.delete("/v1/workspace/notifications")
+async def disconnect_notifications(
+    workspace: Workspace = Depends(get_workspace_from_session_or_key),
+    db: AsyncSession = Depends(get_db),
+):
+    workspace.notification_webhook_url = None
     await db.commit()
     return {"configured": False}
