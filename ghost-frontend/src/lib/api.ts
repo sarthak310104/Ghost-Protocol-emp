@@ -290,6 +290,11 @@ export interface ReasoningConfig {
   configured: boolean;
 }
 
+export interface NotificationConfig {
+  notification_webhook_url: string | null;
+  configured: boolean;
+}
+
 export const api = {
   login: (apiKey: string) =>
     request<Workspace>("/v1/auth/login", {
@@ -350,6 +355,16 @@ export const api = {
     }),
 
   disconnectReasoning: () => request<{ configured: boolean }>("/v1/workspace/reasoning", { method: "DELETE" }),
+
+  notificationConfig: () => request<NotificationConfig>("/v1/workspace/notifications"),
+
+  configureNotifications: (notification_webhook_url: string) =>
+    request<NotificationConfig>("/v1/workspace/notifications", {
+      method: "PUT",
+      body: JSON.stringify({ notification_webhook_url }),
+    }),
+
+  disconnectNotifications: () => request<{ configured: boolean }>("/v1/workspace/notifications", { method: "DELETE" }),
 
   deployments: (limit?: number) =>
     request<Deployment[]>(limit ? `/v1/deployments?limit=${limit}` : "/v1/deployments"),
