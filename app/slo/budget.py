@@ -65,7 +65,10 @@ class SLOStatus:
             "error_budget_total": self.error_budget_total,
             "error_budget_consumed": self.error_budget_consumed,
             "error_budget_remaining_percent": self.error_budget_remaining_percent,
-            "burn_rate_1h": self.burn_rate_1h,
+            # inf (the 100%-target/any-error case) isn't valid JSON --
+            # swapped for null here, same substitution
+            # build_slo_burn_payload makes for the webhook payload.
+            "burn_rate_1h": None if self.burn_rate_1h == float("inf") else self.burn_rate_1h,
             "is_fast_burning": self.is_fast_burning,
         }
 

@@ -48,6 +48,7 @@ async def tick(
     from app.db.sync_session import SyncSessionLocal
     from app.ingestion.retention import prune_old_telemetry
     from app.models.workspace import Workspace
+    from app.slo.alerts import check_all_workspaces_slo_burn_rates
     from app.slo.rollup import rollup_sli_for_last_hour
     from app.workers.tasks import (
         refresh_all_reference_baselines,
@@ -83,6 +84,12 @@ async def tick(
             workspace_ids_for_rollup = db.execute(select(Workspace.id)).scalars().all()
             for ws_id in workspace_ids_for_rollup:
                 rollup_sli_for_last_hour(db, ws_id)
+
+        # After the rollup above, so this hour's counts are already in
+        # before computing burn rate from them.
+        ran.append("check_slo_burn_rates")
+        with SyncSessionLocal() as db:
+            check_all_workspaces_slo_burn_rates(db)
 
         ran.append("prune_old_telemetry")
         with SyncSessionLocal() as db:
