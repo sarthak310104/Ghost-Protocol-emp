@@ -27,7 +27,6 @@ no separate notification-history page needed.
 """
 import uuid
 
-import httpx
 from sqlalchemy.orm import Session
 
 from app.models.incident import Incident
@@ -78,7 +77,18 @@ def notify_incident_event(db: Session, incident_id: uuid.UUID, event: str) -> No
     has no webhook configured -- this is meant to be dispatched
     unconditionally from the incident lifecycle, not gated by the
     caller checking configuration first.
+
+    httpx is imported here, not at module level -- requirements-test.txt
+    deliberately excludes it (see that file's own comment), since
+    build_payload above is the only part of this module the test suite
+    needs, and it has no network dependency at all. A module-level
+    import would have dragged httpx into every test collection run
+    just to reach that one pure function, which is exactly what broke
+    CI: ModuleNotFoundError on a dependency the test suite never
+    actually uses.
     """
+    import httpx
+
     incident = db.get(Incident, incident_id)
     if incident is None:
         return
