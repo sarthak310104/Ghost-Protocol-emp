@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_workspace_from_api_key, get_workspace_from_session_or_key
 from app.db.session import get_db
+from app.deployments.drift import compute_config_drift_async
 from app.models.deployment import Deployment
 from app.models.workspace import Workspace
 
@@ -18,6 +19,15 @@ class RecordDeploymentIn(BaseModel):
     version: str
     notes: str | None = None
     deployed_at: datetime | None = None  # defaults to now if omitted
+    # Optional, flat {key: value} snapshot of this service's tracked
+    # config AT this deploy -- the full current state, not a diff
+    # against the previous deploy. Omit entirely for a deploy with
+    # nothing to report; config drift detection (app/deployments/drift.py)
+    # treats "no snapshot submitted" differently from "submitted an
+    # empty snapshot" -- the former is skipped when looking for a
+    # key's history, the latter means every previously-tracked key was
+    # explicitly unset as of this deploy.
+    config_snapshot: dict[str, str] | None = None
 
 
 @router.post("/v1/deployments")
@@ -40,6 +50,7 @@ async def record_deployment(
         version=payload.version,
         notes=payload.notes,
         deployed_at=payload.deployed_at or datetime.now(timezone.utc),
+        config_snapshot=payload.config_snapshot,
     )
     db.add(deployment)
     await db.commit()
@@ -74,3 +85,21 @@ async def list_deployments(
         }
         for d in deployments
     ]
+
+
+@router.get("/v1/deployments/{service_name}/config-drift")
+async def get_config_drift(
+    service_name: str,
+    workspace: Workspace = Depends(get_workspace_from_session_or_key),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Config drift for one service as of right now -- the same
+    computation an incident's evidence package includes (see
+    app/deployments/drift.py and GET /v1/incidents/{id}/evidence), but
+    queryable standalone rather than only in the context of an open
+    incident. Useful for a "what's currently drifted on this service"
+    view on its own, e.g. before something has actually gone wrong.
+    """
+    drift = await compute_config_drift_async(db, workspace.id, {service_name}, datetime.now(timezone.utc))
+    return [d.to_dict() for d in drift]

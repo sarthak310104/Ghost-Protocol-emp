@@ -11,12 +11,17 @@ def assemble_evidence_package(
     deployments: list,  # ORM Deployment rows, already filtered to the relevant window
     incident_started_at: datetime,
     simulation_results: list[dict],
+    config_drift: list[dict] | None = None,  # already-serialized ConfigDrift.to_dict() entries
 ) -> EvidencePackage:
     """
     Pure assembly -- no DB access here, so the exact same function builds
     the evidence package whether called from a sync Celery task or an
     async FastAPI route. Callers are responsible for fetching and
-    filtering `events`/`deployments` first.
+    filtering `events`/`deployments` first, and for computing
+    `config_drift` first (see app/deployments/drift.py -- its own
+    lookback logic is deliberately not the same recency window
+    `deployments` uses here, so it isn't something this function could
+    derive from `deployments` itself).
     """
     observations = [
         Observation(
@@ -52,5 +57,6 @@ def assemble_evidence_package(
         dependencies=dependencies,
         timeline=timeline,
         deployments=deployment_markers,
+        config_drift=config_drift or [],
         simulation_results=simulation_results,
     )

@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.api.deps import get_workspace_from_session_or_key
 from app.db.session import get_db
+from app.deployments.drift import compute_config_drift_async
 from app.evidence.builder import assemble_evidence_package
 from app.models.deployment import Deployment
 from app.models.incident import Event, Incident, ReasoningResult
@@ -108,6 +109,15 @@ async def get_incident_evidence(
         )
     )).scalars().all()
 
+    # Deliberately not scoped to _DEPLOYMENT_LOOKBACK above -- see
+    # app/deployments/drift.py's module docstring for why a fixed
+    # recent-deploy window would miss a config change that looked fine
+    # in isolation several deploys ago.
+    config_drift = [
+        d.to_dict()
+        for d in await compute_config_drift_async(db, workspace.id, services_in_incident, incident.started_at)
+    ]
+
     # Ghost's own simulation, computed independently of any external
     # reasoning call (see run_incident_simulation) -- this is present
     # even when no reasoning service is configured at all. A
@@ -124,6 +134,7 @@ async def get_incident_evidence(
         deployments=deployments,
         incident_started_at=incident.started_at,
         simulation_results=simulation_results,
+        config_drift=config_drift,
     )
     result = package.to_dict()
     result["incident"]["last_seen_at"] = incident.last_seen_at.isoformat()

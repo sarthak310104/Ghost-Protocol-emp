@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import DateTime, String
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -35,3 +35,16 @@ class Deployment(Base):
     version: Mapped[str] = mapped_column(String(255), nullable=False)
     deployed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=_now, index=True)
     notes: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+
+    # Optional, flat {key: value} map of this service's tracked config at
+    # deploy time -- the FULL state, not a diff against the previous
+    # deploy. A diff would only tell you what changed in *this*
+    # deployment; computing config drift (app/deployments/drift.py) needs
+    # to walk back across several deployments to find when a key last
+    # actually changed, however many deploys ago that was, so each row
+    # needs to carry its own complete snapshot rather than relying on
+    # the previous row's snapshot plus a delta. None (the default, for a
+    # caller that doesn't pass one) means "no config data submitted for
+    # this deploy" -- not "config is empty" -- and drift detection skips
+    # straight past it to the next snapshot-bearing deployment.
+    config_snapshot: Mapped[dict[str, str] | None] = mapped_column(JSONB, nullable=True)

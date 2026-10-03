@@ -119,6 +119,7 @@ QUANTIFIED RESULTS
 | Services list (every discovered service, including ones gone quiet) | done | `GET /v1/services` |
 | CI (backend tests, migration check, frontend build) on every push | done | `.github/workflows/ci.yml` |
 | Load benchmark (ingestion throughput, queue-wait vs. processing latency, API read latency, cohort/retention query cost) | done | `scripts/benchmark.py`, results in [BENCHMARKS.md](./BENCHMARKS.md) |
+| Retrospective config-drift detection (per-key value-change history across deployments, not a fixed recent-deploy window -- catches a change that looked fine in isolation several deploys ago) | done | `app/deployments/drift.py`, `GET /v1/deployments/{service}/config-drift`, folded into incident evidence |
 
 ## Free-tier deployment: no persistent worker
 
@@ -221,16 +222,41 @@ Powers the dashboard and the incident API. `GET
   "deployments": [
     { "service_name": "checkout", "version": "v482", "deployed_at": "...", "minutes_before_incident": 4.2 }
   ],
+  "config_drift": [
+    { "service_name": "checkout", "key": "REDIS_TTL", "current_value": "300", "previous_value": "30",
+      "changed_at": "...", "version_at_change": "v480", "deployments_since_change": 2 }
+  ],
   "simulation_results": []
 }
 ```
 
 Metric names carry the edge prefix (`"checkout->redis latency_p99_ms"`)
-since anomalies are per-edge, not per-service. Deployments match by
-service name within a 60-minute lookback before the incident's start;
-nothing infers "this deployment caused it," it's surfaced as
-correlated-in-time context. `POST /v1/deployments` is how a CI/CD
-pipeline records one.
+since anomalies are per-edge, not per-service. `deployments` matches
+by service name within a 60-minute lookback before the incident's
+start -- that's just version/timeline context, not evidence of a
+specific change.
+
+`config_drift` is a different, deliberately unbounded-by-time list:
+every config key (across the incident's services) whose current value
+differs from a value it held in some earlier deployment, no matter how
+many deploys back that was -- see `app/deployments/drift.py`. A fixed
+recent-deploy window would miss a config change that looked completely
+fine on its own several deploys ago and only caused a problem once
+combined with something more recent; the drift list exists specifically
+to not have that blind spot. It's bounded by actual value-change
+events, not deploy count or calendar time, so it behaves the same
+whether a service deploys hourly or weekly. `GET
+/v1/deployments/{service_name}/config-drift` exposes the same
+computation standalone, outside the context of any incident.
+
+Neither list infers "this deployment caused it" or "this config
+combination caused it" -- both are surfaced as time-correlated
+evidence for a human or the configured reasoning service to interpret,
+not a causal claim Ghost makes itself. `POST /v1/deployments` is how a
+CI/CD pipeline records a deployment, optionally with a
+`config_snapshot: {key: value}` of every tracked config value at that
+deploy (the full state, not a diff) -- omitting it just means that
+deploy contributes nothing to drift detection.
 
 Evidence merges on `(edge, metric)` instead of appending every scan
 cycle -- an anomaly still ongoing at the next 30s scan updates its

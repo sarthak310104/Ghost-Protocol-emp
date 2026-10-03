@@ -9,6 +9,7 @@ from app.core.config import get_settings
 from app.core.dispatch import dispatch
 from app.cohort.analysis import run_cohort_analysis
 from app.db.sync_session import SyncSessionLocal
+from app.deployments.drift import compute_config_drift
 from app.graph.baseline import EdgeObservation, update_edge_baseline
 from app.graph.reference import refresh_reference_baselines
 from app.graph.repo import get_or_create_edge, get_or_create_node
@@ -351,6 +352,10 @@ def diagnose_incident(incident_id: str) -> None:
         affected_edges = {(e["caller"], e["callee"]) for e in incident.evidence}
         dependencies = sorted({e["edge"] for e in incident.evidence})
 
+        # "What deployed shortly before this incident" -- a simple
+        # recency window is the right tool here, since this is just
+        # version/timeline context, not evidence of a specific change
+        # being implicated.
         deployment_lookback = timedelta(minutes=60)
         deployment_rows = db.execute(
             select(Deployment).where(
@@ -370,6 +375,21 @@ def diagnose_incident(incident_id: str) -> None:
             for d in deployment_rows
         ]
 
+        # Config drift is deliberately NOT bound to the same 60-minute
+        # window above -- see app/deployments/drift.py's module
+        # docstring for why a fixed recent-deploy window would miss a
+        # config change that looked fine in isolation several deploys
+        # ago and only matters in combination with something more
+        # recent. This is still just evidence handed to the reasoning
+        # service, not a claim about which key (or combination) is at
+        # fault.
+        config_drift_payload = [
+            d.to_dict()
+            for d in compute_config_drift(
+                db, workspace.id, affected_services | {incident.primary_service}, incident.started_at,
+            )
+        ]
+
         request = DiagnosisRequest(
             workspace_id=str(workspace.id),
             incident_id=str(incident.id),
@@ -382,6 +402,7 @@ def diagnose_incident(incident_id: str) -> None:
             ],
             dependencies=dependencies,
             deployments=deployments_payload,
+            config_drift=config_drift_payload,
         )
 
         try:

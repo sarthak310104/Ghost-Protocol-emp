@@ -56,6 +56,14 @@ class EvidencePackage:
     dependencies: list[str]  # ["checkout -> redis", "checkout -> postgres"]
     timeline: list[TimelineEntry] = field(default_factory=list)
     deployments: list[DeploymentMarker] = field(default_factory=list)
+    # Already-serialized ConfigDrift dicts (see app/deployments/drift.py)
+    # -- kept as plain dicts rather than a parallel dataclass here, same
+    # as simulation_results below, since this schema's job is assembly
+    # and output shape, not re-defining a type that module already owns.
+    # Every key here is an unbounded candidate ("changed at some point,
+    # hasn't changed back"), not a claim that any one of them is the
+    # cause -- see that module's docstring for why.
+    config_drift: list[dict] = field(default_factory=list)
     simulation_results: list[dict] = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -65,5 +73,6 @@ class EvidencePackage:
             "dependencies": self.dependencies,
             "timeline": [t.to_dict() for t in self.timeline],
             "deployments": [d.to_dict() for d in self.deployments],
+            "config_drift": self.config_drift,
             "simulation_results": self.simulation_results,
         }
