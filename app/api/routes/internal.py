@@ -48,6 +48,7 @@ async def tick(
     from app.db.sync_session import SyncSessionLocal
     from app.ingestion.retention import prune_old_telemetry
     from app.models.workspace import Workspace
+    from app.slo.rollup import rollup_sli_for_last_hour
     from app.workers.tasks import (
         refresh_all_reference_baselines,
         run_bottleneck_scan,
@@ -71,6 +72,17 @@ async def tick(
     if now.minute == 0:
         ran.append("refresh_all_reference_baselines")
         refresh_all_reference_baselines()
+
+        # Must run before prune_old_telemetry below: it summarizes the
+        # hour of spans that just completed into a row that survives
+        # pruning (see app/slo/rollup.py's module docstring). Reversing
+        # this order would mean the data it's meant to summarize is
+        # already gone by the time it queries for it.
+        ran.append("rollup_sli")
+        with SyncSessionLocal() as db:
+            workspace_ids_for_rollup = db.execute(select(Workspace.id)).scalars().all()
+            for ws_id in workspace_ids_for_rollup:
+                rollup_sli_for_last_hour(db, ws_id)
 
         ran.append("prune_old_telemetry")
         with SyncSessionLocal() as db:
