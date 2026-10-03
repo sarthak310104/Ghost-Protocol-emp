@@ -125,6 +125,23 @@ export interface ConfigDrift {
   deployments_since_change: number;
 }
 
+export interface WeeklyReliabilityBucket {
+  weeks_ago: number;
+  bucket_start: string;
+  bucket_end: string;
+  incident_count: number;
+  severity_counts: Record<string, number>;
+  resolved_count: number;
+  mttr_mean_seconds: number | null;
+  mttr_median_seconds: number | null;
+}
+
+export interface ServiceReliabilityTrend {
+  service_name: string;
+  // Oldest first -- see app/reliability/trends.py.
+  weeks: WeeklyReliabilityBucket[];
+}
+
 export interface MetricProjection {
   edge: string;
   metric: string;
@@ -339,6 +356,9 @@ export const api = {
 
   configDrift: (serviceName: string) =>
     request<ConfigDrift[]>(`/v1/deployments/${encodeURIComponent(serviceName)}/config-drift`),
+
+  reliabilityTrends: (weeks = 12) =>
+    request<ServiceReliabilityTrend[]>(`/v1/reliability-trends?weeks=${weeks}`),
 
   graph: () => request<GraphEdge[]>("/v1/graph"),
 

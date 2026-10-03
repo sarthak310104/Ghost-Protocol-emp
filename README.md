@@ -109,7 +109,7 @@ QUANTIFIED RESULTS
 | Multi-workspace isolation, bearer API key auth/revocation | done | `app/api/deps.py`, `app/models/workspace.py` |
 | Session-based dashboard login (Fernet-signed httpOnly cookie, real server-side revocation via Redis, separate from bearer ingestion auth) | done | `app/core/session.py`, `app/api/routes/auth.py` |
 | Security hardening (CORS allowlist, per-IP login rate limiting, security headers, input validation) | done | `app/main.py`, `app/api/routes/auth.py` |
-| Frontend dashboard (Next.js + TypeScript + Tailwind) | done, 10 pages real | `ghost-frontend/`, see below |
+| Frontend dashboard (Next.js + TypeScript + Tailwind) | done, 11 pages real | `ghost-frontend/`, see below |
 | Public demo seeding (synthetic traffic + real incident lifecycle on a schedule, through the real ingestion pipeline) | done, opt-in | `app/workers/tasks.py:seed_demo_workspace` |
 | Public landing page (live preview before login, no auth required) | done | `GET /v1/public/demo-preview`, `ghost-frontend/src/app/page.tsx` |
 | Sync-mode dispatch + `/internal/tick` (Celery beat substitute for free-tier hosting -- no persistent worker needed) | done | `app/core/dispatch.py`, `app/api/routes/internal.py` |
@@ -120,6 +120,7 @@ QUANTIFIED RESULTS
 | CI (backend tests, migration check, frontend build) on every push | done | `.github/workflows/ci.yml` |
 | Load benchmark (ingestion throughput, queue-wait vs. processing latency, API read latency, cohort/retention query cost) | done | `scripts/benchmark.py`, results in [BENCHMARKS.md](./BENCHMARKS.md) |
 | Retrospective config-drift detection (per-key value-change history across deployments, not a fixed recent-deploy window -- catches a change that looked fine in isolation several deploys ago) | done | `app/deployments/drift.py`, `GET /v1/deployments/{service}/config-drift`, folded into incident evidence |
+| Historical reliability trends (per-service incident frequency + MTTR over a rolling 12-week lookback -- deliberately no uptime %, since raw telemetry ages out and only Incident history is retained long-term) | done | `app/reliability/trends.py`, `GET /v1/reliability-trends`, Trends page |
 
 ## Free-tier deployment: no persistent worker
 
@@ -148,7 +149,7 @@ the backend above -- no separate auth system. A public landing page
 at `/` shows a live preview of the demo workspace before login (no
 auth needed for that one read); everything else needs a session.
 
-Ten pages wired to live data, not mocked:
+Eleven pages wired to live data, not mocked:
 
 - **Overview** -- system status, a hero showing the single most urgent
   open incident (or all-clear), active-incident and top-bottleneck
@@ -178,6 +179,12 @@ Ten pages wired to live data, not mocked:
   actually watching its data right now (last data received, last
   successful scan, a recent-events log) -- deliberately scoped to one
   workspace, not platform-wide infrastructure metrics
+- **Trends** -- per-service incident frequency and mean-time-to-resolve
+  over a rolling 12-week lookback, bucketed by week -- deliberately no
+  uptime percentage, since raw telemetry ages out (see Telemetry
+  retention) and only Incident history is kept long-term; an uptime
+  number derived from incident windows alone would overclaim precision
+  the data doesn't have
 
 Visual language: an "instrument panel" motif reused across the data
 pages -- a tick-ring/rotating-orbit gauge for whatever number matters
@@ -318,7 +325,7 @@ backup cron trigger)
 - **Phase 4 -- Incident Detection**: anomaly detection, signal correlation, incident timelines, deployment correlation — **done**
 - **Phase 5 -- Evidence**: evidence schema, incident evidence API, timeline generation, deployment context, historical comparisons — **done**
 - **Phase 6 -- Simulation**: statistical impact estimation with confidence intervals — **done** (mean-reversion + concurrent cohort comparison); retrospective config-drift detection — **done** (`app/deployments/drift.py`, folded into incident evidence and the Deployments page); true sandboxed what-if simulation — **not yet** (deliberately out of scope, see app/simulation/engine.py)
-- **Phase 7 -- Platform**: session-based dashboard login, security hardening, Next.js dashboard (10 real pages), free-tier live deployment, per-workspace self-observability, workspace self-service settings/integrations, CI — **done**; licensing/billing service — **not yet**
+- **Phase 7 -- Platform**: session-based dashboard login, security hardening, Next.js dashboard (11 real pages), free-tier live deployment, per-workspace self-observability, workspace self-service settings/integrations, CI — **done**; licensing/billing service — **not yet**
 
 ## Tested
 
