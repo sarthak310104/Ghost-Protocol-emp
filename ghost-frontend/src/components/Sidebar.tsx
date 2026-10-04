@@ -25,6 +25,7 @@ const NAV_GROUPS: { label: string; items: { href: string; icon: string; label: s
       { href: "/deployments", icon: "↗", label: "Deployments" },
       { href: "/cohorts", icon: "⋔", label: "Cohorts" },
       { href: "/trends", icon: "≋", label: "Trends" },
+      { href: "/slos", icon: "◎", label: "SLOs" },
     ],
   },
   {

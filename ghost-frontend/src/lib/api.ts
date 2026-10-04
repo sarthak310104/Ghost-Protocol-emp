@@ -295,6 +295,29 @@ export interface NotificationConfig {
   configured: boolean;
 }
 
+export interface SLODefinition {
+  id: string;
+  service_name: string;
+  target_percent: number;
+  window_days: number;
+  created_at: string;
+  alerting: boolean;
+}
+
+export interface SLOStatus {
+  service_name: string;
+  target_percent: number;
+  window_days: number;
+  total_count: number;
+  error_count: number;
+  actual_percent: number | null;
+  error_budget_total: number;
+  error_budget_consumed: number;
+  error_budget_remaining_percent: number | null;
+  burn_rate_1h: number | null;
+  is_fast_burning: boolean;
+}
+
 export const api = {
   login: (apiKey: string) =>
     request<Workspace>("/v1/auth/login", {
@@ -374,6 +397,18 @@ export const api = {
 
   reliabilityTrends: (weeks = 12) =>
     request<ServiceReliabilityTrend[]>(`/v1/reliability-trends?weeks=${weeks}`),
+
+  slos: () => request<SLODefinition[]>("/v1/slos"),
+
+  sloStatus: () => request<SLOStatus[]>("/v1/slos/status"),
+
+  defineSlo: (service_name: string, target_percent: number, window_days: number) =>
+    request<{ id: string; service_name: string; target_percent: number; window_days: number }>("/v1/slos", {
+      method: "POST",
+      body: JSON.stringify({ service_name, target_percent, window_days }),
+    }),
+
+  deleteSlo: (id: string) => request<{ id: string; deleted: boolean }>(`/v1/slos/${id}`, { method: "DELETE" }),
 
   graph: () => request<GraphEdge[]>("/v1/graph"),
 
