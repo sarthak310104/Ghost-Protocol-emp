@@ -59,8 +59,23 @@ async def tick(
 
     settings = get_settings()
     now = datetime.now(timezone.utc)
-    ran = ["scan_for_anomalies"]
-    scan_for_anomalies()
+    ran = []
+
+    # Every 2 minutes, not every tick. Both this and seed_demo_workspace
+    # below (which does its own unconditional span inserts + graph
+    # update + internal anomaly scan) used to run on literally every
+    # call -- with an external cron pinging at ~1-minute granularity,
+    # that meant continuous DB activity with no gap ever, which is
+    # exactly what exhausted Neon's free-tier compute-hours once
+    # already (see the deployment history/postmortem for that outage).
+    # A stateless wall-clock gate, same pattern as the 5-minute and
+    # hourly blocks below, gives Postgres real idle gaps between ticks
+    # so its auto-suspend can actually fire. Detection latency goes
+    # from effectively instant to up to ~2 minutes -- an acceptable
+    # trade for not risking the whole demo going down for a month again.
+    if now.minute % 2 == 0:
+        ran.append("scan_for_anomalies")
+        scan_for_anomalies()
 
     # Roughly every 5 minutes, matching the original Celery beat cadence.
     if now.minute % 5 == 0:
@@ -99,9 +114,20 @@ async def tick(
                 for ws_id in workspace_ids
             }
 
-    # No-ops immediately if GHOST_DEMO_WORKSPACE_ID isn't set.
-    ran.append("seed_demo_workspace")
-    seed_demo_workspace()
+    # Same 2-minute gate as scan_for_anomalies above, and for the same
+    # reason -- this is the real driver of continuous DB writes in the
+    # live deployment (span inserts, a graph update, and its own
+    # internal anomaly scan, all unconditional whenever
+    # GHOST_DEMO_WORKSPACE_ID is set, which it is in production). Known
+    # trade: a spike-onset incident can now take up to ~2 minutes to
+    # appear instead of showing up on the very next tick, and the
+    # 90-second deployment-recording window at spike onset (see that
+    # function's own comment) can occasionally be missed entirely
+    # between two 2-minute-apart calls -- acceptable for a demo; not
+    # worth re-risking the whole thing going down over.
+    if now.minute % 2 == 0:
+        ran.append("seed_demo_workspace")
+        seed_demo_workspace()
 
     result = {"ran": ran, "at": now.isoformat()}
     if "prune_old_telemetry" in ran:

@@ -121,6 +121,8 @@ QUANTIFIED RESULTS
 | Load benchmark (ingestion throughput, queue-wait vs. processing latency, API read latency, cohort/retention query cost) | done | `scripts/benchmark.py`, results in [BENCHMARKS.md](./BENCHMARKS.md) |
 | Retrospective config-drift detection (per-key value-change history across deployments, not a fixed recent-deploy window -- catches a change that looked fine in isolation several deploys ago) | done | `app/deployments/drift.py`, `GET /v1/deployments/{service}/config-drift`, folded into incident evidence |
 | Historical reliability trends (per-service incident frequency + MTTR over a rolling 12-week lookback -- deliberately no uptime %, since raw telemetry ages out and only Incident history is retained long-term) | done | `app/reliability/trends.py`, `GET /v1/reliability-trends`, Trends page |
+| Outbound notification webhook (POST on incident open/resolve and SLO burn-rate alerts; Slack-Incoming-Webhook-compatible payload, delivery logged to Pipeline Health) | done | `app/notifications/webhook.py`, `GET/PUT/DELETE /v1/workspace/notifications`, Integrations page |
+| SLO / error-budget tracking (per-service target over hourly rollups, fast-burn alerting via the notification webhook with a cooldown so it behaves like a push alert, not a recurring digest -- no user-configurable check interval) | done | `app/slo/`, `GET/POST/DELETE /v1/slos`, `GET /v1/slos/status`, SLOs page |
 
 ## Free-tier deployment: no persistent worker
 
@@ -139,6 +141,17 @@ missed. An external cron service pings it (primary: cron-job.org,
 own 5-minute minimum). Verified with zero Celery processes running at
 all -- see Tested.
 
+The anomaly scan and the demo seeder itself are gated to run on every
+other tick (`now.minute % 2 == 0`) rather than on literally every call,
+for a concrete reason, not a hypothetical one: with those unconditional
+on a ~1-minute external ping, Postgres never saw an idle gap, which is
+exactly what exhausted Neon's free-tier monthly compute-hours once
+already (see commit history around the `GHOST_INTERNAL_SECRET`
+rotation that followed). The 2-minute gate gives the database real
+quiet periods between ticks so its own auto-suspend can actually fire,
+at the cost of up to ~2 minutes of detection/demo-freshness latency
+instead of effectively instant.
+
 Real production deployment under real load would want the persistent
 worker back; this only makes sense for a free, low-traffic demo.
 
@@ -149,7 +162,7 @@ the backend above -- no separate auth system. A public landing page
 at `/` shows a live preview of the demo workspace before login (no
 auth needed for that one read); everything else needs a session.
 
-Eleven pages wired to live data, not mocked:
+Twelve pages wired to live data, not mocked:
 
 - **Overview** -- system status, a hero showing the single most urgent
   open incident (or all-clear), active-incident and top-bottleneck
@@ -185,6 +198,12 @@ Eleven pages wired to live data, not mocked:
   retention) and only Incident history is kept long-term; an uptime
   number derived from incident windows alone would overclaim precision
   the data doesn't have
+- **SLOs** -- define a per-service error-budget target; live status
+  (actual %, budget remaining, 1-hour burn rate) computed fresh from
+  the hourly SLI rollup, never stored; a fast-burning service pushes a
+  notification through the configured webhook once per burn (cooldown
+  state machine, not a recurring digest) -- same delivery path as
+  incident notifications below
 
 Visual language: an "instrument panel" motif reused across the data
 pages -- a tick-ring/rotating-orbit gauge for whatever number matters
@@ -206,9 +225,10 @@ both show a "View live demo" / "Explore the live demo" button whenever
 `NEXT_PUBLIC_DEMO_API_KEY` is set at build time; otherwise it's absent
 entirely.
 
-Integrations (per-workspace reasoning-service config, session-gated)
-and Settings (workspace API key management) are both implemented --
-nothing dashboard-facing is still stubbed.
+Integrations (per-workspace reasoning-service config plus the
+notification webhook, both session-gated) and Settings (workspace API
+key management) are both implemented -- nothing dashboard-facing is
+still stubbed.
 
 ## Evidence
 
@@ -366,9 +386,12 @@ end-to-end against a live Postgres + Redis + Celery stack:
   graph update
 - `/internal/tick`'s auth (header or query-param secret, for cron
   services that make custom headers awkward to configure) and its
-  cadence gating (bottleneck scan every 5 min, reference refresh +
-  retention hourly) checked against a full hour of minute values, not
-  just whichever moment it happened to fire during testing
+  cadence gating (anomaly scan + demo seeder every 2 min, bottleneck
+  scan every 5 min, reference refresh + retention hourly) checked
+  against a full hour of minute values, not just whichever moment it
+  happened to fire during testing -- the 2-minute gate specifically
+  re-verified live against a real request two ticks apart, confirming
+  `ran` actually omits those two jobs on the odd-minute call
 - Ingestion rate limiting and payload-size caps: confirmed genuinely
   per-workspace (a blocked workspace doesn't affect another's own
   counter), and the demo workspace's stricter limit confirmed to
