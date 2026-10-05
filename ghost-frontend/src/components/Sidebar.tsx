@@ -16,6 +16,7 @@ const NAV_GROUPS: { label: string; items: { href: string; icon: string; label: s
       { href: "/system-map", icon: "⌘", label: "System Map" },
       { href: "/incidents", icon: "△", label: "Incidents" },
       { href: "/behavior", icon: "∿", label: "Behavior" },
+      { href: "/synthetic-checks", icon: "⟐", label: "Synthetic Checks" },
     ],
   },
   {

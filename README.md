@@ -109,7 +109,7 @@ QUANTIFIED RESULTS
 | Multi-workspace isolation, bearer API key auth/revocation | done | `app/api/deps.py`, `app/models/workspace.py` |
 | Session-based dashboard login (Fernet-signed httpOnly cookie, real server-side revocation via Redis, separate from bearer ingestion auth) | done | `app/core/session.py`, `app/api/routes/auth.py` |
 | Security hardening (CORS allowlist, per-IP login rate limiting, security headers, input validation) | done | `app/main.py`, `app/api/routes/auth.py` |
-| Frontend dashboard (Next.js + TypeScript + Tailwind) | done, 11 pages real | `ghost-frontend/`, see below |
+| Frontend dashboard (Next.js + TypeScript + Tailwind) | done, 13 pages real | `ghost-frontend/`, see below |
 | Public demo seeding (synthetic traffic + real incident lifecycle on a schedule, through the real ingestion pipeline) | done, opt-in | `app/workers/tasks.py:seed_demo_workspace` |
 | Public landing page (live preview before login, no auth required) | done | `GET /v1/public/demo-preview`, `ghost-frontend/src/app/page.tsx` |
 | Sync-mode dispatch + `/internal/tick` (Celery beat substitute for free-tier hosting -- no persistent worker needed) | done | `app/core/dispatch.py`, `app/api/routes/internal.py` |
@@ -124,6 +124,7 @@ QUANTIFIED RESULTS
 | Historical reliability trends (per-service incident frequency + MTTR over a rolling 12-week lookback -- deliberately no uptime %, since raw telemetry ages out and only Incident history is retained long-term) | done | `app/reliability/trends.py`, `GET /v1/reliability-trends`, Trends page |
 | Outbound notification webhook (POST on incident open/resolve and SLO burn-rate alerts; Slack-Incoming-Webhook-compatible payload, delivery logged to Pipeline Health) | done | `app/notifications/webhook.py`, `GET/PUT/DELETE /v1/workspace/notifications`, Integrations page |
 | SLO / error-budget tracking (per-service target over hourly rollups, fast-burn alerting via the notification webhook with a cooldown so it behaves like a push alert, not a recurring digest -- no user-configurable check interval) | done | `app/slo/`, `GET/POST/DELETE /v1/slos`, `GET /v1/slos/status`, SLOs page |
+| Active synthetic monitoring (scheduled HTTP probes against a registered URL, independent of real traffic -- the one detector that still sees a service that's gone completely silent; opens/resolves a real Incident through a cooldown state machine, link-local/cloud-metadata targets rejected at registration) | done | `app/synthetic/prober.py`, `app/models/synthetic.py`, `GET/POST/DELETE /v1/synthetic-checks`, `GET /v1/synthetic-checks/{id}/results`, Synthetic Checks page |
 
 ## Free-tier deployment: no persistent worker
 
@@ -163,7 +164,7 @@ the backend above -- no separate auth system. A public landing page
 at `/` shows a live preview of the demo workspace before login (no
 auth needed for that one read); everything else needs a session.
 
-Twelve pages wired to live data, not mocked:
+Thirteen pages wired to live data, not mocked:
 
 - **Overview** -- system status, a hero showing the single most urgent
   open incident (or all-clear), active-incident and top-bottleneck
@@ -205,6 +206,13 @@ Twelve pages wired to live data, not mocked:
   notification through the configured webhook once per burn (cooldown
   state machine, not a recurring digest) -- same delivery path as
   incident notifications below
+- **Synthetic Checks** -- register a URL to probe on a schedule;
+  every other page here only sees traffic that already arrived, so a
+  service that crashes and stops emitting telemetry entirely is
+  invisible to all of them -- this is the one page that generates its
+  own signal instead of waiting for one, opening a real Incident after
+  a configurable number of consecutive probe failures and resolving it
+  on the next success, with per-check probe history
 
 Visual language: an "instrument panel" motif reused across the data
 pages -- a tick-ring/rotating-orbit gauge for whatever number matters
@@ -363,7 +371,8 @@ backup cron trigger)
 - **Phase 4 -- Incident Detection**: anomaly detection, signal correlation, incident timelines, deployment correlation — **done**
 - **Phase 5 -- Evidence**: evidence schema, incident evidence API, timeline generation, deployment context, historical comparisons — **done**
 - **Phase 6 -- Simulation**: statistical impact estimation with confidence intervals — **done** (mean-reversion + concurrent cohort comparison + retrospective before/after comparison on a config-drift event); retrospective config-drift detection — **done** (`app/deployments/drift.py`, folded into incident evidence and the Deployments page); true sandboxed what-if simulation — **not yet** (deliberately out of scope, see app/simulation/engine.py)
-- **Phase 7 -- Platform**: session-based dashboard login, security hardening, Next.js dashboard (11 real pages), free-tier live deployment, per-workspace self-observability, workspace self-service settings/integrations, CI — **done**; licensing/billing service — **not yet**
+- **Phase 7 -- Platform**: session-based dashboard login, security hardening, Next.js dashboard (13 real pages), free-tier live deployment, per-workspace self-observability, workspace self-service settings/integrations, CI — **done**; licensing/billing service — **not yet**
+- **Phase 8 -- Active signal**: everything above is passive (analyzes telemetry already received); active synthetic monitoring closes the one real blind spot that leaves (a service gone completely silent is invisible to a comparison-against-baseline detector) by generating its own signal instead of waiting for one — **done** (`app/synthetic/`, Synthetic Checks page); chaos/fault-injection resilience testing — **not yet** (scoped, not started)
 
 ## Tested
 
@@ -441,6 +450,19 @@ end-to-end against a live Postgres + Redis + Celery stack:
   `localhost`) -- `curl`-based testing structurally can't catch this
   class of bug, since `curl` doesn't enforce browser cookie policy at
   all
+
+- Synthetic monitoring end-to-end against a live Postgres + Redis +
+  uvicorn stack: a registered check crossing its failure threshold
+  opened a real Incident (correct title/severity, no duplicate on
+  subsequent failed ticks against the same open incident) and the
+  very next successful probe resolved it, clearing `open_incident_id`
+  and `consecutive_failures`; the notification webhook fired on both
+  the open and the resolve transition, logged to Pipeline Health like
+  any other delivery; the link-local/cloud-metadata SSRF guard
+  confirmed to reject `169.254.169.254` at registration time while
+  leaving private and loopback targets untouched, matching this
+  deployment's self-hosted threat model; per-check `last_probed_at`
+  cadence confirmed independent of the tick's own call frequency
 
 **Not yet verified:** TimescaleDB hypertable conversion
 (`migrations/001_hypertables.sql`) checked for correctness against the

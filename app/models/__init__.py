@@ -6,3 +6,4 @@ from app.models.deployment import Deployment  # noqa: F401
 from app.models.cohort import CohortDimension  # noqa: F401
 from app.models.pipeline_event import PipelineEvent  # noqa: F401
 from app.models.slo import ServiceSLIRollup, SLODefinition  # noqa: F401
+from app.models.synthetic import SyntheticCheck, SyntheticCheckResult  # noqa: F401

@@ -50,6 +50,7 @@ async def tick(
     from app.models.workspace import Workspace
     from app.slo.alerts import check_all_workspaces_slo_burn_rates
     from app.slo.rollup import rollup_sli_for_last_hour
+    from app.synthetic.prober import run_due_checks
     from app.workers.tasks import (
         refresh_all_reference_baselines,
         run_bottleneck_scan,
@@ -129,7 +130,17 @@ async def tick(
         ran.append("seed_demo_workspace")
         seed_demo_workspace()
 
-    result = {"ran": ran, "at": now.isoformat()}
+    # Not gated to even minutes like the two blocks above -- each
+    # SyntheticCheck has its own user-configured interval_seconds and
+    # self-gates against its own last_probed_at (see
+    # app/synthetic/prober.run_due_checks), independent of how often
+    # this tick itself fires. Runs every call; a no-op for any check
+    # whose interval hasn't elapsed yet.
+    ran.append("run_due_checks")
+    with SyncSessionLocal() as db:
+        checks_ran = run_due_checks(db)
+
+    result = {"ran": ran, "at": now.isoformat(), "synthetic_checks_ran": checks_ran}
     if "prune_old_telemetry" in ran:
         result["pruned"] = pruned
     return result

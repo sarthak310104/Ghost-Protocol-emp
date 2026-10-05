@@ -343,6 +343,31 @@ export interface SLOStatus {
   is_fast_burning: boolean;
 }
 
+export interface SyntheticCheck {
+  id: string;
+  name: string;
+  url: string;
+  method: string;
+  expected_status_min: number;
+  expected_status_max: number;
+  timeout_seconds: number;
+  interval_seconds: number;
+  failure_threshold: number;
+  created_at: string;
+  last_probed_at: string | null;
+  consecutive_failures: number;
+  failing: boolean;
+  open_incident_id: string | null;
+}
+
+export interface SyntheticCheckResult {
+  ran_at: string;
+  success: boolean;
+  status_code: number | null;
+  latency_ms: number | null;
+  error: string | null;
+}
+
 export const api = {
   login: (apiKey: string) =>
     request<Workspace>("/v1/auth/login", {
@@ -441,6 +466,29 @@ export const api = {
   deleteSlo: (id: string) => request<{ id: string; deleted: boolean }>(`/v1/slos/${id}`, { method: "DELETE" }),
 
   graph: () => request<GraphEdge[]>("/v1/graph"),
+
+  syntheticChecks: () => request<SyntheticCheck[]>("/v1/synthetic-checks"),
+
+  createSyntheticCheck: (input: {
+    name: string;
+    url: string;
+    method?: string;
+    expected_status_min?: number;
+    expected_status_max?: number;
+    timeout_seconds?: number;
+    interval_seconds?: number;
+    failure_threshold?: number;
+  }) =>
+    request<SyntheticCheck>("/v1/synthetic-checks", {
+      method: "POST",
+      body: JSON.stringify(input),
+    }),
+
+  deleteSyntheticCheck: (id: string) =>
+    request<{ id: string; deleted: boolean }>(`/v1/synthetic-checks/${id}`, { method: "DELETE" }),
+
+  syntheticCheckResults: (id: string, limit = 50) =>
+    request<SyntheticCheckResult[]>(`/v1/synthetic-checks/${id}/results?limit=${limit}`),
 
   get: <T>(path: string) => request<T>(path),
 };
