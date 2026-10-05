@@ -125,6 +125,31 @@ export interface ConfigDrift {
   deployments_since_change: number;
 }
 
+export interface RetrospectivePeriodStat {
+  label: string;
+  sample_count: number;
+  mean_latency_ms: number;
+  stddev_latency_ms: number;
+  error_rate: number;
+}
+
+export interface RetrospectiveComparisonStat {
+  difference_pct: number;
+  ci_95_low_pct: number;
+  ci_95_high_pct: number;
+  method: string;
+}
+
+export interface RetrospectiveResult {
+  edge: string;
+  changed_at: string;
+  window_minutes: number;
+  before: RetrospectivePeriodStat | null;
+  after: RetrospectivePeriodStat | null;
+  comparison: RetrospectiveComparisonStat | null;
+  note: string | null;
+}
+
 export interface WeeklyReliabilityBucket {
   weeks_ago: number;
   bucket_start: string;
@@ -394,6 +419,11 @@ export const api = {
 
   configDrift: (serviceName: string) =>
     request<ConfigDrift[]>(`/v1/deployments/${encodeURIComponent(serviceName)}/config-drift`),
+
+  retrospectiveComparison: (caller: string, callee: string, changedAt: string, windowMinutes = 60) =>
+    request<RetrospectiveResult>(
+      `/v1/deployments/retrospective-comparison?caller=${encodeURIComponent(caller)}&callee=${encodeURIComponent(callee)}&changed_at=${encodeURIComponent(changedAt)}&window_minutes=${windowMinutes}`
+    ),
 
   reliabilityTrends: (weeks = 12) =>
     request<ServiceReliabilityTrend[]>(`/v1/reliability-trends?weeks=${weeks}`),

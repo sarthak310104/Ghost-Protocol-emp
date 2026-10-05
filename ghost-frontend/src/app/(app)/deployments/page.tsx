@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { api, ConfigDrift, Deployment, ApiError } from "@/lib/api";
+import { api, ApiError, ConfigDrift, Deployment, GraphEdge, RetrospectiveResult } from "@/lib/api";
 
 function fmtTime(iso: string): string {
   return new Date(iso).toLocaleString(undefined, {
@@ -9,12 +9,142 @@ function fmtTime(iso: string): string {
   });
 }
 
+function fmtPct(n: number): string {
+  const sign = n > 0 ? "+" : "";
+  return `${sign}${n.toFixed(1)}%`;
+}
+
+function diffColor(n: number): string {
+  if (n < -5) return "text-status-green"; // meaningfully faster
+  if (n > 5) return "text-status-red"; // meaningfully slower
+  return "text-ghost-text";
+}
+
+// Inline, one row at a time -- picks which edge to compare (a service
+// can be the caller on several), then runs the before/after comparison
+// against the drift event's own changed_at. Collapsed by default since
+// most drift rows won't be worth digging into.
+function RetrospectivePanel({
+  serviceName,
+  changedAt,
+  edges,
+}: {
+  serviceName: string;
+  changedAt: string;
+  edges: GraphEdge[];
+}) {
+  const [open, setOpen] = useState(false);
+  const callerEdges = edges.filter((e) => e.caller === serviceName);
+  const [callee, setCallee] = useState(callerEdges[0]?.callee ?? "");
+  const [result, setResult] = useState<RetrospectiveResult | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function run() {
+    if (!callee) return;
+    setLoading(true);
+    setError(null);
+    try {
+      setResult(await api.retrospectiveComparison(serviceName, callee, changedAt));
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to compare");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  if (callerEdges.length === 0) {
+    // This service only appears as a callee on every known edge (or
+    // isn't in the graph at all yet) -- nothing to pick a comparison
+    // edge from.
+    return null;
+  }
+
+  return (
+    <div className="ml-3 mt-1">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="text-hud-bright text-[10px] uppercase tracking-wide hover:opacity-70 transition-opacity"
+      >
+        {open ? "Hide comparison" : "Compare impact"}
+      </button>
+
+      {open && (
+        <div className="mt-2 bg-bg border border-border rounded p-3 max-w-md">
+          <div className="flex items-center gap-2">
+            <span className="text-ghost-dim text-[10px]">{serviceName} →</span>
+            <select
+              value={callee}
+              onChange={(e) => setCallee(e.target.value)}
+              className="bg-surface border border-border rounded px-2 py-1 text-ghost-text text-[11px]
+                         focus:outline-none focus:border-hud-bright transition-colors"
+            >
+              {callerEdges.map((e) => (
+                <option key={e.callee} value={e.callee}>{e.callee}</option>
+              ))}
+            </select>
+            <button
+              onClick={run}
+              disabled={loading}
+              className="ml-auto bg-ghost-text text-bg text-[10px] font-medium tracking-wide uppercase
+                         rounded px-3 py-1 transition-opacity hover:opacity-90
+                         disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              {loading ? "Running..." : "Run"}
+            </button>
+          </div>
+
+          {error && <div className="text-status-red text-[11px] mt-2">{error}</div>}
+
+          {result && (
+            <div className="mt-3 text-[11px]">
+              {result.comparison ? (
+                <>
+                  <div className={`font-display text-[16px] font-semibold ${diffColor(result.comparison.difference_pct)}`}>
+                    {fmtPct(result.comparison.difference_pct)} latency
+                  </div>
+                  <div className="text-ghost-dim text-[10px] mt-0.5">
+                    95% CI {fmtPct(result.comparison.ci_95_low_pct)} to {fmtPct(result.comparison.ci_95_high_pct)}
+                  </div>
+                  <div className="grid grid-cols-2 gap-3 mt-2">
+                    <div>
+                      <div className="text-ghost-dim text-[9px] uppercase tracking-wide">Before</div>
+                      <div className="text-ghost-text mt-0.5">
+                        {result.before!.mean_latency_ms}ms · {result.before!.sample_count} samples
+                      </div>
+                    </div>
+                    <div>
+                      <div className="text-ghost-dim text-[9px] uppercase tracking-wide">After</div>
+                      <div className="text-ghost-text mt-0.5">
+                        {result.after!.mean_latency_ms}ms · {result.after!.sample_count} samples
+                      </div>
+                    </div>
+                  </div>
+                  <div className="text-ghost-dim text-[10px] mt-2 leading-relaxed">
+                    Before/after on one timeline -- weaker evidence than a concurrent cohort,
+                    since anything else that changed in this window is baked into the difference too.
+                  </div>
+                </>
+              ) : (
+                <div className="text-ghost-dim">{result.note}</div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function DeploymentsPage() {
   const [deployments, setDeployments] = useState<Deployment[] | null>(null);
   const [drift, setDrift] = useState<Record<string, ConfigDrift[]> | null>(null);
+  const [edges, setEdges] = useState<GraphEdge[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    api.graph().then(setEdges).catch(() => {}); // used only to populate the comparison picker -- a failure here shouldn't blank the page
+
     api
       .deployments()
       .then(async (rows) => {
@@ -97,17 +227,20 @@ export default function DeploymentsPage() {
                 <div className="text-ghost-muted text-[11px] mb-1.5">{serviceName}</div>
                 <div className="flex flex-col gap-1.5">
                   {entries.map((d, i) => (
-                    <div key={i} className="flex gap-4 text-[12px] items-baseline pl-3 border-l border-border">
-                      <span className="text-ghost-text w-[140px] flex-shrink-0 truncate">{d.key}</span>
-                      <span className="flex items-baseline gap-2">
-                        <span className="text-ghost-dim line-through">{d.previous_value ?? "(unset)"}</span>
-                        <span className="text-ghost-dim">→</span>
-                        <span className="text-ghost-text">{d.current_value ?? "(removed)"}</span>
-                      </span>
-                      <span className="ml-auto text-ghost-dim text-[10px] whitespace-nowrap">
-                        since {d.version_at_change} · {fmtTime(d.changed_at)} ·{" "}
-                        {d.deployments_since_change} deploy{d.deployments_since_change === 1 ? "" : "s"} ago
-                      </span>
+                    <div key={i} className="pl-3 border-l border-border">
+                      <div className="flex gap-4 text-[12px] items-baseline">
+                        <span className="text-ghost-text w-[140px] flex-shrink-0 truncate">{d.key}</span>
+                        <span className="flex items-baseline gap-2">
+                          <span className="text-ghost-dim line-through">{d.previous_value ?? "(unset)"}</span>
+                          <span className="text-ghost-dim">→</span>
+                          <span className="text-ghost-text">{d.current_value ?? "(removed)"}</span>
+                        </span>
+                        <span className="ml-auto text-ghost-dim text-[10px] whitespace-nowrap">
+                          since {d.version_at_change} · {fmtTime(d.changed_at)} ·{" "}
+                          {d.deployments_since_change} deploy{d.deployments_since_change === 1 ? "" : "s"} ago
+                        </span>
+                      </div>
+                      <RetrospectivePanel serviceName={serviceName} changedAt={d.changed_at} edges={edges} />
                     </div>
                   ))}
                 </div>

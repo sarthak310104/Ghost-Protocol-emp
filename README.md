@@ -120,6 +120,7 @@ QUANTIFIED RESULTS
 | CI (backend tests, migration check, frontend build) on every push | done | `.github/workflows/ci.yml` |
 | Load benchmark (ingestion throughput, queue-wait vs. processing latency, API read latency, cohort/retention query cost) | done | `scripts/benchmark.py`, results in [BENCHMARKS.md](./BENCHMARKS.md) |
 | Retrospective config-drift detection (per-key value-change history across deployments, not a fixed recent-deploy window -- catches a change that looked fine in isolation several deploys ago) | done | `app/deployments/drift.py`, `GET /v1/deployments/{service}/config-drift`, folded into incident evidence |
+| Retrospective config-change comparison (real edge metrics in a window before vs after a specific drift event's `changed_at`, same two-sample statistical method as cohort comparison, bounded by raw telemetry retention) | done | `app/deployments/retrospective.py`, `GET /v1/deployments/retrospective-comparison`, "Compare impact" on the Deployments page |
 | Historical reliability trends (per-service incident frequency + MTTR over a rolling 12-week lookback -- deliberately no uptime %, since raw telemetry ages out and only Incident history is retained long-term) | done | `app/reliability/trends.py`, `GET /v1/reliability-trends`, Trends page |
 | Outbound notification webhook (POST on incident open/resolve and SLO burn-rate alerts; Slack-Incoming-Webhook-compatible payload, delivery logged to Pipeline Health) | done | `app/notifications/webhook.py`, `GET/PUT/DELETE /v1/workspace/notifications`, Integrations page |
 | SLO / error-budget tracking (per-service target over hourly rollups, fast-burn alerting via the notification webhook with a cooldown so it behaves like a push alert, not a recurring digest -- no user-configurable check interval) | done | `app/slo/`, `GET/POST/DELETE /v1/slos`, `GET /v1/slos/status`, SLOs page |
@@ -321,12 +322,29 @@ percentage -- never "this is the fix." Two methods:
   itself automatically to an incident's evidence when a registered
   dimension has concurrent data on that edge.
 
+- **Retrospective before/after comparison** (`app/deployments/retrospective.py`):
+  for a past config change with no concurrent cohort to compare
+  against -- real edge metrics in a window right before the change's
+  `changed_at` (see config-drift above) vs a window right after, same
+  two-sample z-approximation and minimum-sample-size guardrail as
+  cohort comparison. Deliberately the weakest-evidence of the three
+  methods here and says so in its own output: before/after on a single
+  timeline is confounded by anything else that changed in the same
+  window, where a concurrent cohort isn't. Bounded by raw telemetry
+  retention (see Telemetry retention) in a way config-drift detection
+  itself isn't -- a change older than the retention window has no
+  surviving "before" spans, and the endpoint reports that plainly
+  rather than comparing against nothing. `GET
+  /v1/deployments/retrospective-comparison`, or "Compare impact" on a
+  drift row on the Deployments page.
+
 Covers most of the original "counterfactual parameter simulation" goal
 (Redis TTL 30s -> 300s, predicted P99 -61%) for companies already
-running canary rollouts. Not covered: retrospective comparison against
-a *past* config change with no concurrent cohort, and true what-if
-simulation for a company with no rollout tooling -- both need the
-sandboxed-replica infrastructure that's out of scope for now.
+running canary rollouts, plus a weaker-evidence fallback for a past
+change with no concurrent cohort. Not covered: true what-if simulation
+for a company with no rollout tooling and no historical data to
+retrospect on -- that needs the sandboxed-replica infrastructure
+that's out of scope for now.
 
 ## Tech stack
 
@@ -344,7 +362,7 @@ backup cron trigger)
 - **Phase 3 -- Bottleneck Analysis**: critical-path, fan-in/fan-out, saturation, structural risk ranking, per-service risk baseline — **done**
 - **Phase 4 -- Incident Detection**: anomaly detection, signal correlation, incident timelines, deployment correlation — **done**
 - **Phase 5 -- Evidence**: evidence schema, incident evidence API, timeline generation, deployment context, historical comparisons — **done**
-- **Phase 6 -- Simulation**: statistical impact estimation with confidence intervals — **done** (mean-reversion + concurrent cohort comparison); retrospective config-drift detection — **done** (`app/deployments/drift.py`, folded into incident evidence and the Deployments page); true sandboxed what-if simulation — **not yet** (deliberately out of scope, see app/simulation/engine.py)
+- **Phase 6 -- Simulation**: statistical impact estimation with confidence intervals — **done** (mean-reversion + concurrent cohort comparison + retrospective before/after comparison on a config-drift event); retrospective config-drift detection — **done** (`app/deployments/drift.py`, folded into incident evidence and the Deployments page); true sandboxed what-if simulation — **not yet** (deliberately out of scope, see app/simulation/engine.py)
 - **Phase 7 -- Platform**: session-based dashboard login, security hardening, Next.js dashboard (11 real pages), free-tier live deployment, per-workspace self-observability, workspace self-service settings/integrations, CI — **done**; licensing/billing service — **not yet**
 
 ## Tested
@@ -362,6 +380,14 @@ end-to-end against a live Postgres + Redis + Celery stack:
 - Cohort comparison end-to-end: dimension registration, on-demand
   analysis with real computed statistics, small-sample-size and
   no-data guardrails, automatic attachment to an incident's evidence
+- Retrospective before/after comparison end-to-end: a real deployment +
+  config_snapshot pair recorded to produce an actual drift event, real
+  spans seeded on both sides of its `changed_at`, the computed
+  percentage difference and 95% CI confirmed to match the seeded data
+  exactly against a live Postgres instance through the real async
+  route; separately confirmed the retention-boundary case (a
+  `changed_at` with no surviving spans on either side) returns a clear
+  note instead of a crash or a silent empty comparison
 - Session auth end-to-end: login/logout, cookie-only access to
   dashboard routes, bearer-only access unaffected, real server-side
   revocation (a token captured before logout gets rejected on replay),

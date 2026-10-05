@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.api.deps import get_workspace_from_api_key, get_workspace_from_session_or_key
 from app.db.session import get_db
 from app.deployments.drift import compute_config_drift_async
+from app.deployments.retrospective import run_retrospective_comparison_async
 from app.models.deployment import Deployment
 from app.models.workspace import Workspace
 
@@ -103,3 +104,29 @@ async def get_config_drift(
     """
     drift = await compute_config_drift_async(db, workspace.id, {service_name}, datetime.now(timezone.utc))
     return [d.to_dict() for d in drift]
+
+
+@router.get("/v1/deployments/retrospective-comparison")
+async def retrospective_comparison(
+    caller: str,
+    callee: str,
+    changed_at: datetime,
+    window_minutes: int = 60,
+    workspace: Workspace = Depends(get_workspace_from_session_or_key),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    Real metrics on one edge in a window before `changed_at` vs a
+    window after -- intended to be called with a config-drift event's
+    own `changed_at` (see GET /v1/deployments/{service}/config-drift),
+    to ask "did the numbers on this edge actually move around that
+    change." `caller`/`callee` are supplied separately because drift
+    is tracked per-service, not per-edge -- a service can be the
+    caller on several edges, and this needs one specific edge to
+    compare. Weaker evidence than cohort comparison (GET
+    /v1/cohort-analysis): before/after is confounded by anything else
+    that changed in the same window, where a concurrent cohort isn't --
+    see app/deployments/retrospective.py's docstring.
+    """
+    result = await run_retrospective_comparison_async(db, workspace.id, caller, callee, changed_at, window_minutes)
+    return result.to_dict()
